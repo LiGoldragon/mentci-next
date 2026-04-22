@@ -53,4 +53,6 @@
 # - github.org
 # - github.repo
 
-sync.remote: "git+ssh://git@github.com/LiGoldragon/mentci-next.git"
+sync.remote: "https://doltremoteapi.dolthub.com/ligoldragon/mentci-next"
+
+export.auto: false
