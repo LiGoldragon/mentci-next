@@ -4,6 +4,15 @@ let
   # Extend by adding to this list. Direnv / nix develop entry creates the links.
   linkedRepos = [
     "tools-documentation"
+    "nota"
+    "nota-serde"
+    "nexus"
+    "nexus-serde"
+    "nexus-schema"
+    "sema"
+    "nexusd"
+    "nexus-cli"
+    "rsc"
   ];
 
   linkSiblingRepos = ''
