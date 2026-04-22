@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "mentci_next",
+  "project_id": "b0d34fc0-648c-4f00-9fa6-bddfe2d4e19a"
+}
