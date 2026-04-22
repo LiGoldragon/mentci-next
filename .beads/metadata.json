@@ -1,7 +1,7 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "embedded",
+  "dolt_mode": "server",
   "dolt_database": "mentci_next",
   "project_id": "8c5f7779-915c-407d-97ac-e2c7c2518b93"
 }
