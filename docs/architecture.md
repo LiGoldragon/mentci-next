@@ -30,22 +30,21 @@ they're decision-journey records.
 
 The engine is a **runtime (criome)** hosting two pillars — a
 **records database (sema)** and an **artifacts family (lojix,
-Li's expanded-and-more-correct nix)**. Three daemons run the
-whole thing: `nexusd` (text ↔ rkyv messenger), `criomed` (sema
-guardian; resolves schema-bound patterns; overlord of lojix),
-`lojixd` (the single lojix daemon — owns the blob store,
-evaluates build specs, orchestrates compile and deploy). `sema`
-owns records, schemas, patterns, query ops, all stored in a
-records database and described by types in `nexus-schema`.
-`lojix` owns build, compile, store, deploy — everything nix
-covers — with a family of crates (`lojix-schema`, `lojix-store`,
-`lojix-msg`, `lojixd`) and the current `lojix` repo slot
-reserved for a spec README. `nexus` is the communication skin
-spanning all of criome: text at the human boundary, rkyv
-internally. The MVP target is **self-hosting**: the engine's
-own source lives as records in sema; `lojixd` projects those
-records to Rust source and compiles them; the resulting binary
-can re-edit its own records.
+Li's expanded-and-more-correct nix)**. Three daemons run it:
+**nexusd** (the translator — nexus text ↔ rkyv), **criomed**
+(the brain — owns sema, runs an incremental evaluator that
+re-resolves dependent state on every record mutation, resolves
+schema-bound patterns, dispatches concrete work to lojixd), and
+**lojixd** (the hands — receives concrete "do this" plans and
+executes: runs cargo/nix subprocesses, materialises files,
+writes blobs into lojix-store, runs deploys). All the thinking
+is criomed's; lojixd is a thin executor. `nexus` is the
+communication skin spanning all of criome: text at the human
+boundary, rkyv internally. The MVP target is **self-hosting**:
+the engine's own source lives as records in sema; criomed
+incrementally evaluates what to build; lojixd executes the
+resulting plan to produce a Rust binary that can re-edit the
+same records.
 
 ---
 
@@ -64,30 +63,33 @@ can re-edit its own records.
           │ rkyv (criome-msg contract)
           ▼
      ┌─────────┐
-     │ criomed │ guardian of sema; overlord of lojix.
+     │ criomed │ the brain — guardian of sema; overlord of lojix.
      │         │ • owns the records database
-     │         │ • runs pattern resolvers against sema snapshots
+     │         │ • runs an incremental evaluator — every mutation
+     │         │   re-plans dependent derived state (compile
+     │         │   plans, pattern bindings, dep closures)
+     │         │ • resolves RawPattern → PatternExpr (hallucination
+     │         │   wall)
      │         │ • fires subscriptions on commits
-     │         │ • dispatches compile/store/deploy to lojixd
-     │         │ • signs capability tokens for lojix-store access
+     │         │ • dispatches concrete plans to lojixd
+     │         │ • signs capability tokens; tracks reachability for
+     │         │   lojix-store GC
      │         │ • never touches binary bytes itself
      └────┬────┘
-          │ rkyv (lojix-msg — single contract)
+          │ rkyv (lojix-msg — concrete "do this" verbs)
           ▼
      ┌──────────┐   owns lojix-store directory
-     │  lojixd  │   (lojix family; the single lojix daemon)
+     │  lojixd  │   (lojix family; thin executor; no evaluation)
      │          │ internal actors:
-     │          │   • ForgeCoordinator + CargoBuilder (rust compile)
+     │          │   • CargoRunner (spawns cargo per RunCargo plan)
+     │          │   • NixRunner (spawns nix/nixos-rebuild)
      │          │   • StoreWriter + StoreReaderPool (blob access)
-     │          │   • DeployCoordinator + HorizonProjector (CriomOS
-     │          │     deploy — currently shells out to nixos-rebuild)
-     │          │   • NixShellout (transitional; retires Phase C)
-     │          │ • pulls records from criomed (read)
-     │          │ • calls rsc (pure projection lib)
-     │          │ • invokes cargo/rustc for Rust opera
-     │          │ • invokes nix/nixos-rebuild for deploy
-     │          │ • writes binaries into lojix-store (in-process)
-     │          │ • replies {binary-hash} to criomed
+     │          │   • FileMaterialiser (records → workdir)
+     │          │ • receives concrete plans: RunCargo, RunNix,
+     │          │   RunNixosRebuild, PutBlob, GetBlob, ...
+     │          │ • executes; writes binary into lojix-store
+     │          │   (in-process)
+     │          │ • replies {output-hash, warnings, wall_ms}
      └──────────┘
 ```
 
@@ -151,13 +153,18 @@ marks lojix-family members.
 - **Layer 0 — text grammars** — nota (spec), nota-serde-core
   (shared lexer+ser+de kernel), nota-serde (façade), nexus
   (spec), nexus-serde (façade).
-- **Layer 1 — schema vocabulary** — nexus-schema (sema records,
-  pattern types, query ops; may rename to `sema-schema` later),
-  lojix-schema **[L]** (Opus, Derivation, nix newtypes like
-  `NarHashSri` / `FlakeRef` / `TargetTriple`).
+- **Layer 1 — schema vocabulary** — nexus-schema (may rename to
+  `sema-schema` later): sema records (including Opus,
+  Derivation, OpusDep, RustToolchainPin, NarHashSri, FlakeRef,
+  OverrideUri, TargetTriple — these are user-written records,
+  not a separate lojix schema), pattern types, query ops.
+  (A separate `lojix-schema` crate was proposed in report 019
+  but superseded by 021 once criomed's incremental evaluator
+  took over build-spec resolution.)
 - **Layer 2 — contract crates** — criome-msg (nexusd↔criomed),
-  lojix-msg **[L]** (criomed↔lojixd; covers compile + store +
-  deploy verbs; single contract).
+  lojix-msg **[L]** (criomed↔lojixd; carries **concrete
+  execution verbs** — RunCargo / RunNix / RunNixosRebuild /
+  PutBlob / GetBlob / MaterializeFiles — not Opus references).
 - **Layer 3 — storage** — sema (records DB, backs criomed),
   lojix-store **[L]** (blob directory + reader library — no
   daemon; writes via lojixd, reads via mmap).
@@ -216,21 +223,20 @@ their shapes.
 
 ## 5 · Key type families (named, not specified)
 
-- **Opus** *(lojix)* — a pure-Rust artifact specification.
-  Nix-like and extremely explicit: toolchain pinned by
-  derivation reference, outputs enumerated (bin / lib / both),
-  features as plain strings, every build-affecting input a
-  field so the record's hash captures the full closure. Lives
-  in `lojix-schema`.
-- **Derivation** *(lojix)* — the escape hatch for non-pure
-  deps. Wraps a nix flake output (or, rarely, an inline nix
-  expression) with a content-hash and named outputs (`out`,
-  `lib`, `dev`, `bin`). Lives in `lojix-schema`.
-- **OpusDep** *(lojix)* — an opus references either another
-  opus (recursive Rust build) or a derivation (system lib,
-  tool) with a link specification describing how cargo/rustc
-  should consume the derivation's outputs. Lives in
-  `lojix-schema`.
+- **Opus** — pure-Rust artifact specification. User-written
+  sema record. Nix-like and extremely explicit: toolchain
+  pinned by derivation reference, outputs enumerated, features
+  as plain strings, every build-affecting input a field so
+  the record's hash captures the full closure. Lives in
+  `nexus-schema`. criomed's incremental evaluator resolves it
+  to a concrete RunCargo plan at edit time; lojixd never sees
+  the Opus directly.
+- **Derivation** — escape hatch for non-pure deps. Wraps a nix
+  flake output (or inline nix expression) with a content-hash
+  and named outputs. User-written sema record. Lives in
+  `nexus-schema`.
+- **OpusDep** — opus → {opus | derivation} link spec.
+  User-written. Lives in `nexus-schema`.
 - **RawPattern** — the wire form of a nexus pattern, carrying
   user-facing names (`StructName`, `FieldName`, `BindName`).
   Appears on criome-msg; never used inside criomed after
@@ -241,15 +247,13 @@ their shapes.
 - **CriomeRequest / CriomeReply** — the nexusd↔criomed
   protocol verbs (lookup, query, assert, mutate, subscribe,
   compile, …).
-- **CompileRequest / CompileReply** — part of the criomed↔lojixd
-  protocol, carrying opus identity, sema snapshot, and a
-  capability token. Lives in `lojix-msg`.
-- **LojixStoreRequest / LojixStoreReply** — put/get/contains
-  verbs, plus streaming variants for large blobs. Also in
-  `lojix-msg`; criomed invokes these for GC and admin, lojixd
-  handles them internally for forge writes.
-- **DeployRequest / DeployReply** — deploy-verb pair (cluster,
-  node, horizon projection); also in `lojix-msg`.
+- **lojix-msg verbs** — concrete execution instructions in the
+  criomed→lojixd direction: RunCargo, RunNix, RunNixosRebuild,
+  PutBlob (streaming variants for large payloads), GetBlob,
+  ContainsBlob, MaterializeFiles, DeleteBlob (criomed-driven
+  GC). Each reply is a result of that concrete operation. No
+  `CompileRequest { opus: OpusId }` — that level of abstraction
+  is criomed's internal concern.
 
 Concrete field lists live in
 [reports/017 §1, §2](../reports/017-architecture-refinements.md)
@@ -278,25 +282,47 @@ its report (or write a new one); don't inline the shape here.
  human
 ```
 
-### Compile + self-host loop
+### Compile + self-host loop (edit-time + run-time)
 
+**Edit-time** (heavy work; incremental):
 ```
- human: (Compile (Opus nexusd))
+ human: (Mutate (Opus nexusd …))
         ▼
- nexusd → criomed → lojixd (with capability token)
-        │
-        ▼ lojixd pulls records from criomed
-        ▼ rsc projects records → in-memory crate
-        ▼ cargo build
-        ▼ Put binary bytes → lojix-store (in-process; no wire)
-        ▼ reply { binary-hash } → criomed
-        ▼ criomed asserts a CompiledBinary record in sema
-        ▼ reply flows back to human
- human: materialise binary to a path (nix-style), run from shell
-        ▼ running binary connects back to nexusd
-        ▼ Asserts new records
-        ▼ next compile produces a different binary — LOOP CLOSES
+ nexusd → criomed
+        ▼
+ criomed:
+   • writes new Opus record to sema
+   • incremental evaluator fires:
+     - resolves toolchain derivation hashes
+     - plans cargo invocation (args, env, fetch list)
+     - caches the concrete plan keyed by opus content hash
+   • fires subscriptions
+        ▼ (no lojixd involvement yet)
 ```
+
+**Run-time** (thin work; one cargo invocation):
+```
+ human: (Compile nexusd)
+        ▼
+ nexusd → criomed
+        ▼
+ criomed: concrete plan is already cached; issue it
+        ▼ rkyv RunCargo { workdir, args, env, fetch_files, … }
+ lojixd:
+   • materialises fetch_files from lojix-store into workdir
+   • spawns cargo
+   • hashes binary; writes into lojix-store (in-process)
+   • replies { output-hash, warnings, wall_ms }
+        ▼
+ criomed asserts CompiledBinary record
+        ▼
+ reply flows back to human
+```
+
+**Self-host close**: human materialises the new binary to a
+filesystem path, runs it; running binary connects to nexusd
+and asserts new records; criomed incrementally re-plans; next
+compile is different — LOOP CLOSES.
 
 ---
 
@@ -333,9 +359,13 @@ Foundational rules observed across sessions.
   message is rkyv.
 - **Schema is the documentation.** Patterns and types resolve
   against sema; hallucinated names are rejected early.
-- **Criomed is the overlord.** Bulk data can flow directly
-  between forged and lojix-stored, but criomed authorises it
-  via capability tokens and retains the reachability view.
+- **criomed owns all evaluation.** lojixd is a worker — receives
+  concrete "do this" plans. Schema resolution, build planning,
+  toolchain pinning, dep-closure computation all happen in
+  criomed's incremental evaluator (fires on every sema
+  mutation). lojixd never sees an Opus record directly.
+- **Criomed is the overlord** of lojix-store. Tracks
+  reachability; signs tokens; directs GC.
 - **A binary is just a path.** No `Launch` message;
   materialisation is filesystem.
 - **Sigils as last resort.** New features land in the matrix
@@ -350,16 +380,21 @@ Foundational rules observed across sessions.
 ## 9 · Reading order for a new session
 
 1. **This file** — the canonical shape.
-2. [reports/020](../reports/020-lojix-single-daemon.md) —
-   latest lojix shape: one daemon (`lojixd`), one contract
+2. [reports/021](../reports/021-criomed-evaluates-lojixd-executes.md)
+   — **critical refinement**: criomed has an incremental
+   evaluator; lojixd is a thin executor, not an evaluator.
+   Supersedes 020 §6–§7 on where evaluation happens.
+3. [reports/020](../reports/020-lojix-single-daemon.md) —
+   lojix shape: one daemon (`lojixd`), one contract
    (`lojix-msg`), no lojix CLI. Supersedes 019 §5–§6.
-3. [reports/019](../reports/019-lojix-as-pillar.md) — lojix as
+4. [reports/019](../reports/019-lojix-as-pillar.md) — lojix as
    the artifacts pillar; broad-lojix framing; three-pillar
-   model. §5–§6 superseded by 020; rest stands.
-4. [reports/017](../reports/017-architecture-refinements.md) —
-   refinements (Opus/Derivation shapes, schema-bound patterns,
-   no-Launch, no-kind-bytes, tokens). Type-home updated in 019
-   (lojix-schema, not nexus-schema).
+   model. §5–§6 superseded by 020; lojix-schema proposal
+   superseded by 021.
+5. [reports/017](../reports/017-architecture-refinements.md) —
+   Opus/Derivation shapes, schema-bound patterns, no-Launch,
+   no-kind-bytes, tokens. Opus/Derivation type-home reverts
+   to nexus-schema per 021.
 3. [reports/013](../reports/013-nexus-syntax-proposal.md) —
    delimiter-family matrix (grammar canon).
 4. [reports/015](../reports/015-architecture-landscape.md) v4 —
