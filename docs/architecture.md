@@ -527,6 +527,18 @@ Foundational rules observed across sessions.
     workspace inclusion/exclusion manifest; deep audit passes
     across code repos, mentci-next, and CriomOS cluster; final
     synthesis.
+19. [reports/046](../reports/046-decisions-synthesis.md) —
+    **decisions synthesis**. Unified recommendations across
+    all 14 P0–P3 decisions from report 031 with ordered action
+    plan. Detailed per-tier research in
+    [reports/042](../reports/042-priority-0-decisions-research.md)
+    (P0 foundational),
+    [reports/043](../reports/043-priority-1-decisions-research.md)
+    (P1 MVP),
+    [reports/044](../reports/044-priority-2-decisions-research.md)
+    (P2 post-MVP),
+    [reports/045](../reports/045-priority-3-decisions-research.md)
+    (P3 lojix transition).
 17. [reports/016](../reports/016-tier-b-decisions.md) — open
     questions (most answered by 017).
 18. `reports/014` — serde-refactor history.
