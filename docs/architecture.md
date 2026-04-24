@@ -513,6 +513,20 @@ Foundational rules observed across sessions.
     production CLI while routing toward lojixd.
 16. [reports/031](../reports/031-uncertainties-and-open-questions.md)
     — session-close uncertainties list; prioritised decisions.
+17. [reports/034](../reports/034-sema-multi-category-framing.md),
+    [reports/035](../reports/035-bls-quorum-authz-as-records.md),
+    [reports/036](../reports/036-world-model-as-sema-records.md)
+    — multi-category sema framing (all criomed state in sema),
+    BLS-quorum authz as records (post-MVP), world-model data as
+    records (post-MVP).
+18. [reports/037](../reports/037-workspace-inclusion-and-archive-system.md),
+    [reports/038](../reports/038-deep-audit-code-repos.md),
+    [reports/039](../reports/039-deep-audit-mentci-next.md),
+    [reports/040](../reports/040-criomos-cluster-audit.md),
+    [reports/041](../reports/041-deep-audit-final.md) —
+    workspace inclusion/exclusion manifest; deep audit passes
+    across code repos, mentci-next, and CriomOS cluster; final
+    synthesis.
 17. [reports/016](../reports/016-tier-b-decisions.md) — open
     questions (most answered by 017).
 18. `reports/014` — serde-refactor history.

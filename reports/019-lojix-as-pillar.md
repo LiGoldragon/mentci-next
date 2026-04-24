@@ -77,8 +77,9 @@ Detailed table was in the research pass. Key items:
 - **Two parallel dep systems (Cargo + nix)** → `OpusDep::{Opus,
   Derivation}` unifies both
 - **Build/store blob conflation in `/nix/store`** → sema
-  (records, typed) and lojix-store (blobs, opaque) are peer
-  stores with separate daemons
+  (records, typed) and lojix-store (real files, hash-keyed
+  — a nix-store analogue) are peer stores under separate
+  daemons
 
 ## 4 · Three-pillar architecture with two-axis framing
 
