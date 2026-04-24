@@ -10,8 +10,8 @@
 ```
 [ ] 1. jj st                          (check what changed)
 [ ] 2. bd dolt pull                   (pull beads updates from main)
-[ ] 3. jj describe -m "..."           (set commit message)
-[ ] 4. jj bookmark set main -r @      (move main to current change)
+[ ] 3. jj commit -m "..."             (create commit + fresh empty working copy)
+[ ] 4. jj bookmark set main -r @-     (move main to the just-committed change)
 [ ] 5. jj git push --bookmark main    (push to remote)
 ```
 
@@ -93,8 +93,8 @@ bd update <id> --claim  # Claim it
 ```bash
 bd close <id1> <id2> ...             # Close all completed issues at once
 bd dolt pull                         # Pull latest beads from main
-jj describe -m "..."                 # Set commit message (working copy auto-tracked)
-jj bookmark set main -r @            # Move main to current change
+jj commit -m "..."                   # Commit working copy; jj creates a fresh @ on top
+jj bookmark set main -r @-           # Move main to the just-committed change (now @-)
 jj git push --bookmark main          # Push to remote
 ```
 

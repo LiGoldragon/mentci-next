@@ -37,6 +37,20 @@ records in sema; when an edit cascades, the cascade settles as
 more sema records. This is the whole point of the design: one
 store of truth, one way to change it, full introspection.
 
+**Sema holds code as logic, not text.** The record kinds in
+sema describe *semantic structure* — `Fn`, `Struct`, `Enum`,
+`Module`, `Expr`, `Type`, `Signature`, … (see
+[reports/004](../reports/004-sema-types-for-rust.md)). Sema
+never contains source bytes, token streams, or abstract syntax
+trees as records. Text is either transport (nexus syntax ↔
+record trees at nexusd's boundary) or projection (records → `.rs`
+via rsc when rustc needs to consume bytes). An entire class of
+rustc errors (`unresolved import`, `cannot find type in this
+scope`) doesn't exist in sema because references are
+content-hash IDs and invalid references are rejected at
+mutation time. See
+[reports/026](../reports/026-sema-is-code-as-logic.md).
+
 Three daemons work around that invariant:
 
 - **nexusd** — the translator: nexus text ↔ rkyv at the human
@@ -376,6 +390,13 @@ Foundational rules observed across sessions.
   cascades happen inside sema. criomed is the engine that
   applies mutations and maintains invariants; it doesn't hold a
   separate cache of "derived values."
+- **Sema holds code as logic, not text.** Record kinds describe
+  semantic structure (`Fn`, `Struct`, `Expr`, `Type`, …). Text
+  is transport (nexus syntax at nexusd's boundary) or projection
+  (records → `.rs` via rsc). No `SourceRecord`, no
+  `TokenStream`, no `Ast` as records. Structural invariants
+  (references are content-hash IDs; kinds are schema-validated)
+  make a class of rustc errors impossible by construction.
 - **lojixd is for effects sema can't do** — spawn processes,
   touch the filesystem, invoke external tools. Its inputs are
   plan records read from sema; its outputs are outcome records
@@ -397,31 +418,46 @@ Foundational rules observed across sessions.
 ## 9 · Reading order for a new session
 
 1. **This file** — the canonical shape.
-2. [reports/021](../reports/021-criomed-evaluates-lojixd-executes.md)
-   — **critical refinement**: criomed has an incremental
-   evaluator; lojixd is a thin executor, not an evaluator.
-   Supersedes 020 §6–§7 on where evaluation happens.
-3. [reports/020](../reports/020-lojix-single-daemon.md) —
+2. [reports/026](../reports/026-sema-is-code-as-logic.md) —
+   **most recent critical refinement**: sema holds code as
+   fully-specified logic, not text. Corrects contamination in
+   023/024/025. Narrows where rustc is needed and what
+   "compile-validity" means as records.
+3. [reports/021](../reports/021-criomed-evaluates-lojixd-executes.md)
+   — sema IS the evaluation; criomed is sema's engine; lojixd
+   is a thin executor. Supersedes 020 §6–§7.
+4. [reports/020](../reports/020-lojix-single-daemon.md) —
    lojix shape: one daemon (`lojixd`), one contract
    (`lojix-msg`), no lojix CLI. Supersedes 019 §5–§6.
-4. [reports/019](../reports/019-lojix-as-pillar.md) — lojix as
+5. [reports/019](../reports/019-lojix-as-pillar.md) — lojix as
    the artifacts pillar; broad-lojix framing; three-pillar
    model. §5–§6 superseded by 020; lojix-schema proposal
    superseded by 021.
-5. [reports/017](../reports/017-architecture-refinements.md) —
+6. [reports/017](../reports/017-architecture-refinements.md) —
    Opus/Derivation shapes, schema-bound patterns, no-Launch,
    no-kind-bytes, tokens. Opus/Derivation type-home reverts
    to nexus-schema per 021.
-3. [reports/013](../reports/013-nexus-syntax-proposal.md) —
+7. [reports/013](../reports/013-nexus-syntax-proposal.md) —
    delimiter-family matrix (grammar canon).
-4. [reports/015](../reports/015-architecture-landscape.md) v4 —
-   full architecture synthesis (parts superseded by 017 — read
-   after 017 so you know what's current).
-5. [reports/016](../reports/016-tier-b-decisions.md) — open
-   questions (most answered by 017).
-6. `reports/014` — serde-refactor history.
-7. `reports/004`, `reports/009-binds-and-patterns` — technical
-   references.
+8. [reports/004](../reports/004-sema-types-for-rust.md) — the
+   original (and still correct) framing of sema records for
+   Rust code: Fn, Struct, Expr, Type, …. Read with 026 for
+   the corrected picture.
+9. [reports/022](../reports/022-records-as-evaluation-prior-art.md)
+   — prior art for records-as-evaluation (Datomic, DBSP, Salsa,
+   Unison, Eve, Prolog).
+10. [reports/023](../reports/023-sema-as-rust-checker.md),
+    [reports/024](../reports/024-self-hosting-cascade-walkthrough.md),
+    [reports/025](../reports/025-sema-schema-inventory.md) —
+    the text-layer-contaminated first pass; read the
+    correction banners then 026 for corrections.
+11. [reports/015](../reports/015-architecture-landscape.md) v4 —
+    full architecture synthesis (parts superseded by 017 — read
+    after 017 so you know what's current).
+12. [reports/016](../reports/016-tier-b-decisions.md) — open
+    questions (most answered by 017).
+13. `reports/014` — serde-refactor history.
+14. `reports/009-binds-and-patterns` — technical reference.
 
 Older reports have been deleted to prevent context poisoning.
 
