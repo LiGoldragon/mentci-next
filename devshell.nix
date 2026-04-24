@@ -6,6 +6,7 @@ let
   # Direnv / nix develop entry creates the links.
   linkedRepos = [
     "tools-documentation"
+    # --- sema-ecosystem CANON ---
     "criome"          # spec repo — runtime pillar
     "nota"            # spec repo — data grammar
     "nota-serde-core" # shared lexer + ser/de kernel
@@ -17,13 +18,18 @@ let
     "nexusd"          # messenger daemon
     "nexus-cli"       # text client
     "rsc"             # records → Rust source projector
-    "lojix"           # TRANSITIONAL — currently Li's deploy CLI (report 030)
+    "lojix-store"     # content-addressed filesystem (renamed from criome-store 2026-04-24)
+    "lojix"           # TRANSITIONAL — Li's working deploy CLI (report 030)
+    # --- CriomOS host (criome engine runs on criomos) ---
+    "CriomOS"         # NixOS-based host OS for the sema ecosystem
+    "horizon-rs"      # horizon projection library (lojix's deploy path links it)
+    "CriomOS-emacs"   # emacs config as CriomOS module
+    "CriomOS-home"    # home-manager config as CriomOS module
     # --- CANON-MISSING (repos don't exist yet; uncomment when scaffolded) ---
     # "criomed"       # sema's engine daemon
     # "criome-msg"    # nexusd↔criomed contract
     # "lojix-msg"     # criomed↔lojixd contract (report 030 Phase B)
     # "lojixd"        # lojix daemon (report 030 Phase C)
-    # "lojix-store"   # content-addressed filesystem
   ];
 
   linkSiblingRepos = ''

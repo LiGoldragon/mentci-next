@@ -44,9 +44,23 @@ to find them at `~/git/<name>/` and symlinked at
 | `nexus-serde` | nexus's public façade. | `reports/014` |
 | `nexus-schema` | Record-kind vocabulary (Fn, Struct, Opus, Derivation, …). | `reports/004`, `reports/033` |
 | `sema` | Records DB (redb-backed). | `docs/architecture.md §3` |
+| `lojix-store` | Content-addressed filesystem + index DB (nix-store analogue; holds real unix files). Renamed from `criome-store` on 2026-04-24; code is a seed-only prototype that will be replaced when lojixd scaffolds (report 030 Phase C). | `docs/architecture.md §3`, `reports/037 §3` |
 | `nexusd` | Messenger daemon (text ↔ rkyv). | `docs/architecture.md §2` |
 | `nexus-cli` | Text client. | `docs/architecture.md §4` |
 | `rsc` | Records → Rust source projector. | `reports/004`, `reports/033` |
+
+### CriomOS cluster
+
+The criome engine runs on CriomOS. These host-OS repos are
+canonical because engine work may need to evolve the OS
+alongside it.
+
+| Repo | Role | Pointer |
+|---|---|---|
+| `CriomOS` | NixOS-based host OS for the sema ecosystem. | `CriomOS/AGENTS.md` |
+| `horizon-rs` | Horizon projection library; lojix's deploy path links it in-process. | `horizon-rs/AGENTS.md` |
+| `CriomOS-emacs` | Emacs configuration as a CriomOS module. | `CriomOS-emacs/AGENTS.md` |
+| `CriomOS-home` | Home-manager configuration as a CriomOS module. | `CriomOS-home/AGENTS.md` |
 
 ## TRANSITIONAL
 
@@ -67,24 +81,23 @@ exist yet. Create when we reach the corresponding work.
 | `criome-msg` | nexusd↔criomed contract (rkyv). | Alongside criomed scaffold. |
 | `lojix-msg` | criomed↔lojixd contract (rkyv). | `reports/030` Phase B. |
 | `lojixd` | lojix daemon (forge + store + deploy actors inside). | `reports/030` Phase C. |
-| `lojix-store` | Content-addressed filesystem (nix-store analogue) + index DB. | After lojixd scaffolds. |
 
 Once each is created, add its entry to CANON and to
 `devshell.nix`'s `linkedRepos` list.
 
-## RETIRED (targets for `~/git/archive/`)
+## RETIRED / ARCHIVED
 
-Superseded; physical archive pending.
+All session-initial RETIRED/ARCHIVED entries were actioned on
+2026-04-24:
 
-| Repo | Supersession reason | Pointer |
-|---|---|---|
-| `criome-store` | "Universal blob store" concept split into `sema` (records DB) + `lojix-store` (CA filesystem); prototype code doesn't match either target architecture. | `docs/architecture.md §3`, `reports/037 §3` |
+- `criome-store` was **renamed to `lojix-store`** (GitHub rename
+  + local move; remote redirects). Now CANON.
+- `lojix-archive` was **deleted** (GitHub + local). Pre-2026-04-24
+  "lojix-as-aski-dialect" vision was obsolete; no surviving
+  content worth preserving. Reference trace lives in
+  `reports/019` and commit history.
 
-## ARCHIVED (banner-marked; physical move optional)
-
-| Repo | Archival reason | Pointer |
-|---|---|---|
-| `lojix-archive` | Pre-2026-04-24 "lojix-as-aski-dialect" vision; superseded by "lojix is the artifacts-pillar namespace, Li's take on an expanded nix". | `lojix-archive/CLAUDE.md`, `reports/019` |
+There are currently no entries in RETIRED or ARCHIVED.
 
 ## SHELVED (post-MVP but not retired)
 
@@ -105,9 +118,9 @@ otherwise.
   vision): `aski`, `askic`, `aski-cc`, `aski-core`,
   `aski-core-bootstrap`, `aski-macro`, `ply-aski`,
   `astro-aski`, `synth-core`, `semac`, `sema-codegen`.
-- **CriomOS** (OS-level, related but separate project):
-  `CriomOS`, `CriomOS-emacs`, `CriomOS-home`, `criomos-archive`,
-  `horizon-rs`.
+- **CriomOS archival only**: `criomos-archive`. (The live
+  cluster `CriomOS`, `CriomOS-emacs`, `CriomOS-home`,
+  `horizon-rs` is CANON, listed above.)
 - **Noesis / veri / etc.** (old experiments): `noesis`,
   `noesis-schema`, `veri-core`, `veric`, `corec`.
 - **Web / book / non-technical**: `AnaSeahawk-website`,
