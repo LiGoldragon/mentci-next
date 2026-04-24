@@ -74,8 +74,14 @@ analysis in reports/047–049; synthesis in
    criomed, freelist-reused, with a reserved seed range
    `[0, 1024)`. Post-MVP migration path to `Slot(Blake3)`
    birth-hash for federation.
-2. **Scope is global**. Opus-local names live in each opus's
-   `Vec<MemberEntry>` (`{ slot, local_name, visibility, kind }`).
+2. **Scope is global** and names are **global too**. One name
+   per slot, stored on `SlotBinding.display_name`; renames
+   change it once and every opus's rsc projection picks up
+   the new name. Per-opus `MemberEntry { slot, visibility,
+   kind }` declares the slots an opus defines plus their
+   visibility — but not a local name. No aliasing at MVP; if
+   `use X as Y`-style per-site aliases ever become load-bearing,
+   add an `AliasEntry` record kind then.
 3. **History is per-kind change logs** (one redb table per
    record-kind; key `(Slot, seq)`). Global `rev_index`
    auxiliary table for cross-kind queries. Per-kind log is
@@ -84,8 +90,8 @@ analysis in reports/047–049; synthesis in
    fires on `SlotBinding.content_hash` changes; coalesced at
    Revision commit.
 5. **Enum mapping is rsc-generated per-opus**, not stored in
-   sema. Composite display-names computed by the ingester at
-   slot-creation.
+   sema. Composite display-names computed by the **ingester**
+   (the `.rs`→records translator) at slot-creation.
 
 **Migration**: refactor `nexus-schema` to kill
 `Type::Named(TypeName)` etc.; add the slot-ref type; criomed

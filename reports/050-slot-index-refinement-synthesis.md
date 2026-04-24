@@ -10,15 +10,16 @@ Replaces the "clarifying sub-questions" section of report 046 §P0.1.*
 
 ## TL;DR — refined recommendations
 
-| Sub-Q | Li's lean | After research | Still open |
-|---|---|---|---|
-| 1 · Slot-id shape | Incrementing int + freelist + enum mapping | `Slot(u64)` counter + freelist + rsc-generated per-opus enum | u32 vs u64 width; ingester vs criomed owns composite name |
-| 2 · Scope | Global | **Confirmed global**. Opus-local name lives on per-opus `MemberEntry` | Federation partitioning deferred post-MVP |
-| 3 · Change log per-kind | Per-kind | **Confirmed per-kind**; per-kind is ground truth, everything else derivable view | — |
-| 4 · Cascade trigger | Suggestion accepted | Subscription on index-entry (i.e. on `SlotBinding` kind) | — |
+| Sub-Q | Li's lean | Ratified |
+|---|---|---|
+| 1 · Slot-id shape | Incrementing int + freelist + enum mapping | `Slot(u64)` counter + freelist + rsc-generated per-opus enum |
+| 2 · Scope | Global | Global. **One name per slot** (`SlotBinding.display_name`), globally consistent. Rename changes it everywhere. |
+| 3 · Change log per-kind | Per-kind | Per-kind; ground truth; `index::K` + `rev_index` derivable. |
+| 4 · Cascade trigger | Suggestion accepted | Subscription on index-entry (`SlotBinding` kind). |
+| + | Width | `u64` (ratified 2026-04-24). |
+| + | Composite name ownership | Ingester computes initial name; criomed handles subsequent renames. |
 
-**Net**: Li's four answers are load-bearing and survive scrutiny.
-The remaining work is mechanical (record shapes + redb tables).
+**Net**: all five decisions ratified. Remaining work is mechanical (record shapes + redb tables).
 
 ---
 
@@ -89,19 +90,26 @@ pub struct Slot(pub u64);          // rkyv-archived as 8 bytes.
 pub struct SlotBinding {
     slot: Slot,
     content_hash: Hash,            // current content for this slot at this rev
-    display_name: Name,            // opus-independent canonical name (composite)
+    display_name: Name,            // ONE global name; composite like shapeOuterCircle
+                                   // rename changes this; every opus's rsc
+                                   // projection picks up the new name
     valid_from: RevisionId,
     valid_to: Option<RevisionId>,  // None = current; Some = historical (slot reused)
 }
 
-// Opus-level record that maps a slot to the opus-local Rust name.
+// Opus-level record: declares which slots this opus defines and their
+// visibility. NO per-opus name — names are global via SlotBinding.
 pub struct MemberEntry {
     slot: Slot,
-    local_name: Name,              // what this opus calls it
     visibility: Visibility,
     kind: KindId,                  // Fn / Struct / ...
 }
 ```
+
+Note: no per-opus name aliasing in the MVP. A slot has one
+global display-name. If `use X as Y` aliasing ever matters,
+add an `AliasEntry { target_slot, local_name }` record kind
+later — don't design for it now.
 
 Seed-slot reservation: `[0, 1024)` is reserved for compiled-in
 seed records. The allocator refuses to mint slots in that
