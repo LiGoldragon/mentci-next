@@ -11,7 +11,7 @@ documentation, strictly separated:
 
 | Where | What | Example |
 |---|---|---|
-| `docs/architecture.md` | **Prose + diagrams only.** No code. High-level shape, invariants, relationships, rules. | "criomed owns sema; lojix-stored owns lojix-store; text crosses only at nexusd" |
+| `docs/architecture.md` | **Prose + diagrams only.** No code. High-level shape, invariants, relationships, rules. | "criomed owns sema; lojixd owns lojix-store; text crosses only at nexusd" |
 | `reports/NNN-*.md` | **Concrete shapes + decision records.** Type sketches, record definitions, message enums, research syntheses, historical context. | `Opus { … }` full rkyv sketch |
 | the repos themselves | **Implementation.** Rust code, tests, flakes, Cargo.toml. | `nexus-schema/src/opus.rs` |
 
@@ -60,7 +60,7 @@ Three daemons work around that invariant:
   dispatches concrete work to lojixd.
 - **lojixd** — the hands: does what sema can't (spawns cargo /
   nix / nixos-rebuild subprocesses; reads and writes the
-  lojix-store blob directory; materialises files). Its inputs
+  lojix-store filesystem; materialises files). Its inputs
   are plan records read from sema; its outputs become outcome
   records written back.
 
@@ -107,12 +107,13 @@ resulting binaries can re-edit the same records.
      │          │ internal actors:
      │          │   • CargoRunner (spawns cargo per RunCargo plan)
      │          │   • NixRunner (spawns nix/nixos-rebuild)
-     │          │   • StoreWriter + StoreReaderPool (blob access)
-     │          │   • FileMaterialiser (records → workdir)
+     │          │   • StoreWriter + StoreReaderPool (store-entry
+     │          │     placement + path lookup + index updates)
+     │          │   • FileMaterialiser (store entries → workdir)
      │          │ • receives concrete plans: RunCargo, RunNix,
-     │          │   RunNixosRebuild, PutBlob, GetBlob, ...
-     │          │ • executes; writes binary into lojix-store
-     │          │   (in-process)
+     │          │   RunNixosRebuild, PutStoreEntry, GetStorePath, ...
+     │          │ • executes; places binary file tree into
+     │          │   lojix-store under its blake3-derived path
      │          │ • replies {output-hash, warnings, wall_ms}
      └──────────┘
 ```
@@ -121,8 +122,9 @@ resulting binaries can re-edit the same records.
 
 - Text crosses only at nexusd's boundary.
 - No daemon-to-daemon path routes bulk data through criomed —
-  forged and lojix-stored are connected directly, authorised by
-  a criomed-signed capability token.
+  when forge work inside lojixd writes to lojix-store, it does
+  so in-process under a criomed-signed capability token; no
+  bytes ever cross criomed.
 - Criomed never sees compiled binary bytes; it only records
   their hashes in sema.
 - There is no `Launch` protocol message. Binaries are
@@ -147,25 +149,49 @@ resulting binaries can re-edit the same records.
 - **Identity of a workspace opus** tracked in a name→root-hash
   table (git-refs analogue).
 
-### lojix-store — content-addressed blobs
+### lojix-store — content-addressed filesystem
 
-- **Owner**: lojix-stored.
-- **Backend**: append-only file plus a rebuildable hash-to-
-  offset index.
-- **Holds**: opaque bytes only (compiled binaries; user file
-  attachments referenced by sema records; anything too large or
-  too unstructured to belong in sema).
-- **No typing**. No kind bytes. The type of a blob is known
-  only through the sema record that references its hash.
+An analogue to the nix-store, but content-addressed by blake3.
+**It holds actual unix files and directory trees**, not blobs
+inside a single append-only file. A compiled Rust binary lives
+as a real executable on disk under a hash-derived path; you can
+`exec` it directly.
+
+- **Owner**: lojixd.
+- **Layout**: a filesystem directory (e.g. `~/.lojix/store/`)
+  with one hash-keyed subdirectory per content-addressed
+  artifact — the shape is close to nix's
+  `/nix/store/<hash>-<name>/` tree, but the hash prefix is the
+  identity (no out-of-band name is needed). A store entry may
+  be a single file, a directory tree with an executable inside,
+  or a larger fileset — whatever lojixd materialised.
+- **Index database**: a separate index (lojixd-owned; likely
+  redb) maps `blake3 → path + metadata + reachability`. It is
+  the book-keeping side; it does not *contain* the files.
+- **Holds**: compiled binaries and their runtime trees; user
+  file attachments referenced by sema records; nix-produced
+  artifacts that sema records point at. Always real files on
+  disk, never packed blobs.
+- **No typing**. Store entries don't carry a kind; their type
+  is known only through the sema records that reference their
+  hashes.
 - **Access control**: capability tokens, signed by criomed.
 
 ### Relationship
 
-Sema records carry content-hash fields that reference blobs in
-lojix-store. "Record says hash H; fetch H from lojix-stored."
-Criomed keeps a reachability view (what hashes are live) and
-can direct garbage collection; it never handles the bytes
-themselves.
+Sema records carry content-hash fields (`BlobRef` / store-entry
+references) that point at lojix-store entries. "Record says
+hash H; lojixd can resolve H to a filesystem path." Criomed
+keeps a reachability view (which hashes are live) and can
+direct garbage collection; it never handles the file bytes
+themselves and never reads the store directly.
+
+Because store entries are real files, **running a compiled
+artifact is just exec'ing the path** that lojixd resolves H to
+— no `Launch` protocol verb, no extraction step, no copy. This
+is the same reason `nix build` followed by running
+`./result/bin/foo` works: the hash path *is* the runnable
+location.
 
 ---
 
@@ -188,9 +214,13 @@ marks lojix-family members.
 - **Layer 2 — contract crates** — criome-msg (nexusd↔criomed),
   lojix-msg **[L]** (criomed↔lojixd; carries **concrete
   execution verbs** — RunCargo / RunNix / RunNixosRebuild /
-  PutBlob / GetBlob / MaterializeFiles — not Opus references).
+  PutStoreEntry / GetStorePath / MaterializeFiles — not Opus
+  references).
 - **Layer 3 — storage** — sema (records DB, backs criomed),
-  lojix-store **[L]** (blob directory + reader library — no
+  lojix-store **[L]** (content-addressed filesystem: hash-keyed
+  directory tree of real unix files + an index DB for metadata;
+  nix-store analogue; no daemon of its own — lojixd owns
+  writes, reads are filesystem ops + a reader library — no
   daemon; writes via lojixd, reads via mmap).
 - **Layer 4 — daemons** — nexusd (messenger), criomed (guardian),
   lojixd **[L]** (single lojix daemon — forge + store + deploy
@@ -214,8 +244,9 @@ marks lojix-family members.
 layer. A crate is lojix-family iff it participates in the
 content-addressed typed build/store/deploy pipeline (Li's
 "expanded nix"). Criteria: carries `NarHashSri`/`FlakeRef`/
-artifact records, or drives nix/cargo, or stores opaque blobs,
-or is the typed wire for any of those.
+artifact records, or drives nix/cargo, or manages the
+content-addressed filesystem, or is the typed wire for any of
+those.
 
 ### The `lojix-*` namespace — Li's expanded nix
 
@@ -343,12 +374,15 @@ its report (or write a new one); don't inline the shape here.
         ▼ rkyv RunCargo { workdir, args, env, fetch_files, … }
  lojixd:
    • materialises fetch_files from lojix-store into workdir
+     (filesystem copy or symlink from hash-keyed store paths)
    • spawns cargo
-   • hashes binary; writes into lojix-store (in-process)
-   • replies { output-hash, warnings, wall_ms }
+   • hashes the built artifact tree; places it into lojix-store
+     under its blake3-derived path (in-process); updates the
+     store's index DB
+   • replies { store-entry-hash, warnings, wall_ms }
         ▼
  criomed writes the outcome back as a sema record
- (e.g. CompiledBinary pointing at the blob hash)
+ (e.g. CompiledBinary pointing at the store-entry hash)
         ▼
  reply flows back to human
 ```
@@ -455,34 +489,47 @@ Foundational rules observed across sessions.
 9. [reports/022](../reports/022-records-as-evaluation-prior-art.md)
    — prior art for records-as-evaluation (Datomic, DBSP, Salsa,
    Unison, Eve, Prolog).
-10. [reports/027](../reports/027-adversarial-review-of-026.md)
+10. [reports/033](../reports/033-record-catalogue-and-cascade-consolidated.md)
+    — consolidated record-kind catalogue + cascade walkthrough
+    under the corrected framing (sema = logic, lojix-store =
+    content-addressed filesystem). Replaces deleted 023/024/025.
+11. [reports/032](../reports/032-lojix-store-correction-audit.md)
+    — lojix-store terminology audit after Li's correction from
+    "blob DB" to "nix-store-like filesystem". Records the
+    delete/sharpen verdicts applied this session.
+12. [reports/027](../reports/027-adversarial-review-of-026.md)
     — adversarial critique of 026; the shaky specifics
     surfaced (hash-vs-name refs, ingester scope, edit UX,
     diagnostic spans, cascade cost).
-11. [reports/028](../reports/028-doc-propagation-inventory.md)
+13. [reports/028](../reports/028-doc-propagation-inventory.md)
     — per-repo doc-alignment inventory; items actioned this
     session.
-12. [reports/029](../reports/029-ra-chalk-polonius-structural-lessons.md)
+14. [reports/029](../reports/029-ra-chalk-polonius-structural-lessons.md)
     — rust-analyzer / chalk / polonius structural lessons
     stripped of text-layer framing.
-13. [reports/030](../reports/030-lojix-transition-plan.md) —
+15. [reports/030](../reports/030-lojix-transition-plan.md) —
     **critical**: lojix repo is a working monolith today, not
     a spec-only README. Transition plan preserves the
     production CLI while routing toward lojixd.
-14. [reports/031](../reports/031-uncertainties-and-open-questions.md)
+16. [reports/031](../reports/031-uncertainties-and-open-questions.md)
     — session-close uncertainties list; prioritised decisions.
-15. [reports/023](../reports/023-sema-as-rust-checker.md),
-    [reports/024](../reports/024-self-hosting-cascade-walkthrough.md),
-    [reports/025](../reports/025-sema-schema-inventory.md) —
-    the text-layer-contaminated first pass; read the
-    correction banners then 026 for corrections.
-16. [reports/015](../reports/015-architecture-landscape.md) v4 —
-    full architecture synthesis (parts superseded by 017 — read
-    after 017 so you know what's current).
 17. [reports/016](../reports/016-tier-b-decisions.md) — open
     questions (most answered by 017).
 18. `reports/014` — serde-refactor history.
 19. `reports/009-binds-and-patterns` — technical reference.
+
+Deleted reports (wrong per Li's "delete wrong reports, don't
+banner them" rule):
+- **015** (architecture-landscape v4) — superseded by
+  017/020/021/026; four-daemon topology and kind-byte registry
+  were wrong.
+- **023** (sema-as-rust-checker) — text-layer contamination
+  (SourceRecord/TokenStream/Ast records in sema). Useful bits
+  consolidated into 033.
+- **024** (self-hosting-cascade-walkthrough) — same
+  contamination. Useful bits in 033.
+- **025** (sema-schema-inventory) — same contamination
+  (ModulePath as source-path). Useful bits in 033.
 
 Older reports have been deleted to prevent context poisoning.
 

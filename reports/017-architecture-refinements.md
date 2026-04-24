@@ -13,11 +13,14 @@ Li's directions (abridged):
 - **Q4 · PatternExpr** — schema-bound. Schema documents + blocks
   hallucinated field names.
 - **Q5 · nexus-cli** — pipe-simple; no flags beyond `--version`.
-- **Q6 · forged↔lojix-stored** — token approach. Criomed as
-  overlord of lojix-store.
+- **Q6 · forge-actor↔lojix-store** — token approach. Criomed
+  as overlord of lojix-store. (Under report 020, forged and
+  lojix-stored are internal actors inside a single `lojixd`;
+  the cross-daemon token flow becomes in-process.)
 - **Q7 · Launch** — filesystem, not protocol. There is no
-  `Launch` nexus message. A binary in lojix-stored is materialised
-  to a path (nix-store analogue); you run it directly.
+  `Launch` nexus message. A binary in lojix-store lives at a
+  hash-derived filesystem path (nix-store analogue); you run
+  it directly.
 - **Q8 · kind-byte registry** — Li didn't follow the concept.
   Answer: drop it.
 
@@ -312,54 +315,56 @@ validation (camelCase / kebab-case leader + `[a-z0-9_-]` body).
 
 Replaces 016 Q8.
 
+> *Updated 2026-04-24 (post-lojix-store correction)*: Li
+> clarified lojix-store is a **content-addressed filesystem**
+> (nix-store analogue) — it holds real unix files and directory
+> trees, with a separate index DB — not a packed blob file.
+> The "drop the kind byte" conclusion survives (still no kind
+> tags) but the phrasing below that treats lojix-store as a
+> `blake3 → bytes` map is wrong on the backend. The `Put…` enum
+> sketch here is superseded by `PutStoreEntry` /
+> `GetStorePath` / `MaterializeFiles` / `DeleteStoreEntry`
+> verbs (see report 033 Part 2 and architecture.md §3).
+
 ### Answer to "I don't understand your concept"
 
-A kind byte was a 1-byte tag stored alongside each blob in a
-content-addressed store so that `scan(kind)` (e.g. "list all
-Struct records") could be done by byte-prefix lookup. It only
-mattered when **one store held everything**.
+A kind byte was a 1-byte tag stored alongside each store entry
+in a content-addressed store so that `scan(kind)` could be
+done by byte-prefix lookup. It only mattered when **one store
+held everything**.
 
 ### Why it's gone now
 
 - sema is its own redb-backed DB. Records have their own tables;
   no kind byte needed.
 - arbor is shelved; kinds 0xA0, 0xF0, 0xF1 vanish.
-- lojix-store only holds opaque blobs (compiled binaries from
-  forged, maybe file-like data). Narrow scope.
+- lojix-store holds real files (compiled binary trees from
+  lojixd forge actors, user attachments). Type is known through
+  the referring sema record — a filesystem of bytes doesn't
+  need typing any more than `/nix/store/` does.
 
-### What lojix-store becomes
+### What lojix-store is (corrected)
 
-**A pure `blake3 → bytes` map. No kind bytes. No registry.**
+A **content-addressed filesystem + index DB**. Hash-keyed
+directory of real unix files/trees; separate index DB for
+metadata and reachability. Type is known by the referring sema
+record. A sema record carrying
+`compiled_binary: StoreEntryRef` tells you the referent is a
+binary tree; lojix-store doesn't need to care.
 
-Type is known by the referring sema record. A sema record
-carrying `compiled_binary: ContentHash` tells you the hash is a
-binary; lojix-store doesn't need to care.
+If we want "list all binaries" debuggability, the index DB
+already answers it — no separate sidecar needed.
 
-If we ever want "list all binaries" debuggability: add a
-metadata sidecar inside lojix-stored (`hash → { stored_at,
-byte_len, producer }`). Additive, local, no cross-crate
-coordination.
+### What the `LojixStoreRequest` enum was going to look like (superseded)
 
-### What the `LojixStoreRequest` enum looks like
+The kind-drop intuition holds; the actual verb set is now in
+report 033 Part 2 (`PutStoreEntry`, `GetStorePath`,
+`MaterializeFiles`, `DeleteStoreEntry`, `ContainsStoreEntry`).
+The `Put / PutBegin / PutChunk / PutCommit` streaming-session
+shape is still relevant for large artifact trees; see the
+streaming sub-question in 031 P3.
 
-Simpler. Drop the `kind` parameter from Put/Scan:
-
-```rust
-pub enum LojixStoreRequest {
-    Put      { data: Vec<u8> },                  // → Hash
-    PutBegin { total_len: u64 },                 // → SessionId (streaming)
-    PutChunk { session: SessionId, bytes: Vec<u8> },
-    PutCommit{ session: SessionId, expected: Option<Hash> },
-    PutAbort { session: SessionId },
-    Get      { hash: Hash },
-    GetBegin { hash: Hash },                     // streaming
-    Contains { hash: Hash },
-    Stats,                                        // → total bytes, count
-}
-```
-
-No `Scan(kind)`. Criomed's sema-db already answers "what blobs
-do we reference?" by scanning `ContentHash` fields in records.
+(Original enum sketch removed — superseded by 033 Part 2.)
 
 ---
 
@@ -375,9 +380,12 @@ debating between criomed-does-exec vs launcher-daemon.
 
 ### Correction
 
-**A binary in lojix-store is just bytes identified by a hash.**
-To run it: materialize to a filesystem path and exec it from a
-shell, like nix does with its store.
+**A binary in lojix-store is a real file** living at a
+hash-derived path in the content-addressed filesystem. To run
+it: just `exec` the path. No materialisation step needed for
+binaries that are already in the store (materialisation applies
+when assembling a workdir from multiple store entries for a
+build).
 
 Nix analogue:
 ```
@@ -387,31 +395,31 @@ Nix analogue:
 
 Lojix equivalent (sketch — not a spec):
 ```
-~/.lojix/store/<hash>.bin        # materialized by lojix-stored on request
-~/.lojix/bin/<opus-name>         # optional symlink tree
+~/.lojix/store/<hash>/bin/<name>    # real file; directly executable
+~/.lojix/bin/<opus-name>            # optional symlink tree
 ```
 
 **There is no `Launch` nexus message.** The flow is:
 
-1. `(Compile (Opus nexusd))` → criomed → forged → binary put into
-   lojix-store, hash returned in compile reply.
+1. `(Compile (Opus nexusd))` → criomed → lojixd → binary tree
+   placed into lojix-store at its hash-derived path, store-
+   entry hash returned in compile reply.
 2. Criomed writes a `CompiledBinary { opus, hash }` record to
    sema (so "what's the current binary for opus X" is a sema
    query).
-3. To run: some tool (nexus-cli subcommand or a separate
-   `lojix-materialize` CLI) resolves `opus → hash → filesystem
-   path`, ensures lojix-stored has written the bytes to that
-   path (lazy materialization), prints the path.
-4. User types the path in a shell. Done.
+3. To run: `lojixd` resolves `hash → filesystem path` via its
+   index DB (a trivial lookup); nexus-cli prints the path.
+4. User types the path in a shell. Done. The binary is already
+   on disk.
 
 ### What criomed does gain
 
 Criomed is the **overlord** of lojix-store (per Li's Q6): it
-tracks what binaries exist (via sema records), knows what's
-safe to garbage-collect, and issues capability tokens to forged
-so forged can `Put` directly to lojix-stored without going
-through criomed. But it does **not** launch processes. That's a
-userland concern.
+tracks what store entries exist (via sema records), knows
+what's safe to garbage-collect, and issues capability tokens
+to lojixd's forge actors so they can place store entries
+without bytes crossing criomed. But it does **not** launch
+processes. That's a userland concern.
 
 ### CriomeRequest diff
 
@@ -422,41 +430,47 @@ Remove `Launch { binary, argv }`. Add (implicit in the flow):
 
 ---
 
-## §5 · forged ↔ lojix-stored via capability token
+## §5 · forge actors ↔ lojix-store via capability token
 
 Replaces 015 §13 T1, 016 Q6.
 
-**Confirmed**: forged has its own Unix-socket connection to
-lojix-stored. When criomed dispatches a compile to forged, it
-includes a short-lived **capability token** in the
-`CompileMessage` that authorises `Put(kind=binary)` operations.
-Lojix-stored validates the token and accepts puts from forged
-without going through criomed.
+> *Updated 2026-04-24*: Under report 020, the forged and
+> lojix-stored daemons fold into a single `lojixd`. The token
+> flow below was designed for cross-daemon; when both actors
+> live in the same process, the authorisation becomes an
+> in-process capability check rather than a wire-format token.
+> The pattern — criomed as overlord issuing a signed permit,
+> lojixd-internal store writer verifying — survives.
+
+When criomed dispatches a compile plan to lojixd, it includes
+a short-lived **capability token** that authorises placing new
+store entries for that compile. Lojixd's internal store-writer
+actor validates and accepts; no bytes ever cross criomed.
 
 **Criomed stays the overlord**: it signs tokens, tracks what
-forged stored, can revoke tokens. Large binary bytes skip
-criomed's process memory entirely.
+lojixd stored (via sema records), can revoke the per-principal
+policy. Large binary trees skip criomed's process memory
+entirely.
 
-Sketch:
+Sketch (updated for in-process authorisation):
 ```rust
-// compile-msg
-pub struct CompileRequest {
+// lojix-msg envelope
+pub struct RunCargoPlan {
     // ...
-    pub store_token: LojixStoreToken,            // short-lived capability
+    pub store_token: LojixStoreToken,  // short-lived capability
 }
 
-// lojix-store-msg
 pub struct LojixStoreToken {
     pub issued_at:  UnixMillis,
     pub expires_at: UnixMillis,
-    pub permits:    TokenPermits,                // { put: bool, get: bool, … }
-    pub signature:  Signature,                   // criomed's key over the above
+    pub permits:    TokenPermits,      // { place: bool, read: bool, … }
+    pub signature:  Signature,         // criomed's key over the above
 }
 ```
 
-Token verification is a simple check inside lojix-stored —
-criomed publishes a pubkey at startup; tokens are signed;
-lojix-stored verifies.
+Token verification is a simple check inside lojixd's store-
+writer actor: criomed publishes a pubkey at startup; tokens
+are signed; the actor verifies.
 
 ---
 

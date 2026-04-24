@@ -1,5 +1,24 @@
 # 019 — lojix as the artifacts pillar of criome
 
+> **⚠ Partial supersession — read before the body**
+>
+> - **Daemon topology** (this report's §5–§6 and the table that
+>   lists `lojix-forged` + `lojix-stored` as separate daemons):
+>   **superseded by report 020**. Both forge and store become
+>   internal actors inside a single `lojixd`.
+> - **`lojix-store` as "blob store"** (this report's §2–§3
+>   framing): **superseded by docs/architecture.md §3 and
+>   reports/032**. lojix-store is a **content-addressed
+>   filesystem** (nix-store analogue) holding real unix files
+>   and directory trees, with a separate index DB — not a
+>   blob-packed file.
+> - **What survives here**: the three-pillar framing
+>   (criome ⊇ {sema, lojix}); lojix = "Li's expanded and more
+>   correct nix"; lojix-family membership as a second axis
+>   orthogonal to layer; the 11 nix problems lojix fixes; the
+>   8 principles; wrap→replace migration phases; broad-lojix
+>   thesis.
+
 *Claude Opus 4.7 / 2026-04-24 · supersedes the deleted report 018.
 Synthesis of three research passes (vision, topology, boundaries)
 given two settled premises from Li: "forged is deeply linked with
