@@ -61,19 +61,31 @@ every nexus text construct has exactly one signal form, and vice
 versa. This gives nexusd a clean, testable contract: parse text →
 emit signal, and (on the reply path) decode signal → render text.
 
-### 2.3 — signal is a peer to nexus, not just its output
+### 2.3 — signal is a peer to nexus (architecturally; not yet practically for LLMs)
 
 The mechanical translation rule has a non-obvious corollary: a
 client that prefers to compose signal directly — bypassing nexus
-text entirely — is doing a legitimate thing. An agent generating
-a transactional batch from program structure may compose
+text entirely — is doing a legitimate thing. A deterministic
+programmatic tool (a Rust client, a script) generating a
+transactional batch from program structure may compose
 `AssertOp`/`MutateOp`/`TxnBatch` records in rkyv directly, send
 those to nexusd, and skip the parse step.
 
-This is not a new feature; it is an articulation of what the
-"all-rkyv except nexus" rule already implies. Agents speak signal
-natively. Humans speak nexus text. Both arrive at criomed as
-signal frames.
+But for **LLM agents today**: this is *not* the practical
+interface. Today's LLMs are trained on text and can author nexus
+text fluently; they cannot author rkyv binary structures
+directly. Direct LLM signal authoring is a future capability —
+it will land when LLM models are trained against binary signal
+formats. Until then, the practical client-side interface for
+LLMs is nexus text, parsed into signal by nexusd. Per Li's
+correction 2026-04-25 ("not yet, not until llm models are trained
+using binary signal data").
+
+Architecturally, the peer status of signal still holds — the
+"all-rkyv except nexus text" rule already implies it, and
+deterministic programmatic clients exercise it. The framing is
+"signal is a peer-shaped interface; nexus text is the
+peer-shaped interface that LLMs can actually use today."
 
 This re-frames *client-msg* as well. Today client-msg's `Send`
 variant carries `nexus_text: String`. A future `Send` variant
@@ -170,14 +182,17 @@ The current rule says *"all-rkyv except nexus."* Refine to:
 
 ### Q-S1 — Is signal a peer language to nexus?
 
-§2.3 above frames signal as a peer authoring surface for agents,
-not just nexus's compiled output. Confirm: is this how Li thinks
-of it? If yes, a tool/agent generating signal frames directly is
-a first-class workflow, not a hack.
+§2.3 above frames signal as architecturally peer-shaped, but
+practically not yet usable by LLMs (per Li's 2026-04-25
+correction). Confirm: is this nuanced framing right? Signal is a
+peer for *deterministic programmatic clients*; nexus text is the
+peer-shaped interface LLMs can actually author until they are
+trained on binary signal data.
 
-Lean: **yes, signal is a peer**. The "all-rkyv except nexus text"
-rule and the mechanical-translation rule both imply it. Agents
-are expected to compose signal frames directly when convenient.
+Lean: **architecturally yes, practically not yet for LLMs**.
+The "all-rkyv except nexus text" rule still permits any client
+that *can* compose rkyv to do so; that population today is
+deterministic tools, not LLMs.
 
 ### Q-S2 — Should client-msg gain a signal-payload Send variant?
 

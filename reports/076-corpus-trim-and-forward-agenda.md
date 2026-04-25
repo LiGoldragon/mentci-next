@@ -37,20 +37,18 @@ research reports that produced them.
 
 | Concept | Canonical home |
 |---|---|
-| The 10-repo architecture, invariants A-D, project-wide rules | [architecture.md](../docs/architecture.md) |
+| The 10-repo architecture, invariants A-D, project-wide rules, rejected framings, rung-by-rung bootstrap | [architecture.md](../docs/architecture.md) |
 | Workspace inventory, last-reviewed date | [docs/workspace-manifest.md](../docs/workspace-manifest.md) |
+| Project-wide agent conventions (restate-to-refute rule, etc.) | [AGENTS.md](../AGENTS.md) |
 | Nexus language semantics — edit verbs, query operators, signal contract | [reports/070](070-nexus-language-and-contract.md) |
+| Signal naming decision and three-layer messaging story | [reports/077](077-nexus-and-signal.md) |
 | Rkyv discipline — pinned 0.8 portable feature set, derive pattern, encode/decode API | [reports/074](074-portable-rkyv-discipline.md) |
 | Lojix transition phases A-G, day-one skeleton | [reports/030](030-lojix-transition-plan.md) |
-| Restate-to-refute corpus rule | [reports/069](069-restate-to-refute-rule-and-cleanup.md) |
 | Edit-UX shape, request-composing shell, four write verbs | [reports/057](057-edit-ux-freshly-reconsidered.md) |
-| Rung-by-rung bootstrap stages, Stage A and B near-term plan | [reports/064](064-bootstrap-as-iterative-competence.md) |
 | Schema-of-schema framing, genesis-via-nexus, validator pipeline | [reports/065](065-criome-schema-design.md) |
 | Pattern-matching theory, datalog-style semi-naive eval | [reports/009](009-binds-and-patterns.md) |
 | Delimiter-family matrix, position-defines-meaning | [reports/013](013-nexus-syntax-proposal.md) |
 | Tree-sitter grammar recommendation for editor integration | [reports/068](068-tree-sitter-grammars-for-nota-and-nexus.md) |
-| Post-MVP directions (machina-chk, BLS-quorum, world-model, etc.) | [reports/060](060-post-mvp-directions.md) |
-| Lojix as the third pillar, two-axis layering, nix as build backend | [reports/019](019-lojix-as-pillar.md) |
 
 ## 3. Live open questions
 
@@ -139,44 +137,49 @@ specified before signal can land.
 - Further multi-angle synthesis reports. Two were written in two
   days; both are deleted in this pass.
 
-## 5. Trim ledger (this pass)
+## 5. Trim ledger
 
-### 5.1 Deleted (8 reports)
+### 5.1 Deleted in pass 1 (2026-04-25 morning, 8 reports)
 
 | Report | Reason |
 |---|---|
 | **017-architecture-refinements.md** | Fully subsumed by [architecture.md](../docs/architecture.md). |
 | **059-nix-as-build-backend-and-macro-philosophy.md** | Canonised in architecture.md §1 + §10. |
 | **066-architecture-md-audit.md** | Operational audit; work landed. |
-| **067-what-to-implement-next.md** | Q-α (15-kind set) supplanted by the 070 query+edit-language framing. §1 framing carried into this report; §3 design carried into [070](070-nexus-language-and-contract.md). G1 (genesis principal) carried into §3.2 above. |
-| **071-cli-protocol-and-implementation-order.md** | Client-msg policies live in [nexusd code](../../nexusd/src/client_msg/) now. The implementation-order sketch was a one-shot plan for that work, which has shipped. |
-| **072-multi-angle-audit-and-path-forward.md** | Decision-point report; decisions landed. Carried the now-supplanted Q-α framing. |
-| **073-rkyv-derives-criome-types-and-tests.md** | Bridging audit between Track A landing and Track B/C; both shipped (B in 074, C deferred). |
-| **075-next-step-multi-angle-with-skeptical-view.md** | Carried supplanted Q-α framing. The Tier 1 / Tier 2 / Tier 3 distillation is reproduced in §4 above without the dismissed framing. |
+| **067-what-to-implement-next.md** | Q-α (15-kind set) supplanted by the 070 query+edit-language framing. G1 (genesis principal) carried into §3.2. |
+| **071-cli-protocol-and-implementation-order.md** | Client-msg policies live in [nexusd code](../../nexusd/src/client_msg/). |
+| **072-multi-angle-audit-and-path-forward.md** | Decisions landed; carried supplanted Q-α framing. |
+| **073-rkyv-derives-criome-types-and-tests.md** | Bridging audit between Track A landing and Track B/C; both shipped. |
+| **075-next-step-multi-angle-with-skeptical-view.md** | Carried supplanted Q-α framing; Tier-1/2/3 reproduced in §4 above. |
 
-### 5.2 Flagged for light trim (next pass)
+### 5.2 Deleted in pass 2 (2026-04-25 afternoon, 8 reports)
 
-| Report | Trim action |
+| Report | Reason |
 |---|---|
-| 004-sema-types-for-rust.md | Keep coverage statement (§3) + shape/identity pattern (§2). Drop M2 task detail. |
-| 019-lojix-as-pillar.md | Keep §2 thesis + §8 guardrails. Drop daemon table (superseded). |
-| 033-record-catalogue-and-cascade-consolidated.md | Keep Part 2 catalogue. Drop Part 1 (duplicates architecture.md). |
-| 048-change-log-design-research.md | Keep Part 3 ChangeLogEntry shape + redb layout. Drop Parts 1-2 (philosophy). |
+| **004-sema-types-for-rust.md** | DAG-via-content-hash shape implicit in [architecture.md §5](../docs/architecture.md); types live in [nexus-schema codebase](../../nexus-schema/src/). |
+| **019-lojix-as-pillar.md** | Three-pillar framing absorbed by [architecture.md §1 + §4 + §8](../docs/architecture.md); daemon topology superseded by §4; lojix-family lineage implicit in §8. |
+| **033-record-catalogue-and-cascade-consolidated.md** | Type catalogue lives in [nexus-schema codebase](../../nexus-schema/src/); framework duplicates architecture.md §1-§5. |
+| **048-change-log-design-research.md** | ChangeLogEntry shape in [architecture.md §5](../docs/architecture.md) (per-kind tables, `(Slot, seq)` keys, rev/op/content-hashes/principal/sig-proof fields). |
+| **060-post-mvp-directions.md** | Strategic directions named implicitly in [architecture.md §10](../docs/architecture.md) (machina-chk, BLS-quorum, world-model, sema-as-universal-records). Forward-looking sketches are agent-recoverable from architecture context when the time comes. |
+| **061-intent-pattern-and-open-questions.md** | Canonical commitments §1.1-§1.13 are all in [architecture.md §1-§5](../docs/architecture.md); rejected framings §5 are in [§10 "Rejected framings"](../docs/architecture.md); Q-A1-A6 already in §3.3 above. |
+| **064-bootstrap-as-iterative-competence.md** | Rung-by-rung philosophy is in [architecture.md §10 "Bootstrap rung by rung"](../docs/architecture.md); Stage A/B detail is implementation-roadmap territory, not architecture. |
+| **069-restate-to-refute-rule-and-cleanup.md** | Rule lives in [AGENTS.md](../AGENTS.md) "Report hygiene"; cleanup work is done. |
 
-### 5.3 Kept as-is (12 reports)
+### 5.3 Reports that survived both trim passes (10)
 
-009, 013, 030, 057, 060, 061, 064, 065, 068, 069, 070, 074.
+009, 013, 030, 057, 065, 068, 070, 074, 076, 077.
 
-Each is the canonical home for an insight not duplicated elsewhere.
+Each is either canonical for a non-duplicated insight (009 pattern theory; 013 delimiter matrix; 057 edit UX; 065 schema groups; 068 tree-sitter; 070 language design; 074 rkyv discipline) or a living document (030 lojix transition; 076 this entry-point; 077 nexus/signal naming).
 
 ## 6. Conventions for future agents
 
 - Check this report (076) before reading older reports. The trim
   ledger §5 names where to find what.
 - When opening a new report, ask: does the insight have a
-  canonical home in architecture.md or a kept reports/ entry?
-  If yes, edit the canonical home; do not write a new report.
-- The "restate to refute" rule from [069](069-restate-to-refute-rule-and-cleanup.md) applies. State
+  canonical home in [architecture.md](../docs/architecture.md), [AGENTS.md](../AGENTS.md), a kept reports/ entry, or
+  in code? If yes, edit the canonical home; do not write a new
+  report.
+- The "restate-to-refute" rule lives in [AGENTS.md](../AGENTS.md). State
   positively; silently omit excluded options; lead with the
   thing being decided.
 - The query+edit-language framing (§1 above) is the anchor.
