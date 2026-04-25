@@ -497,6 +497,15 @@ Foundational rules. Every session follows these.
 - **Sema is all we are concerned with.** Everything else
   orbits sema.
 - **Text only crosses nexusd.** All internal traffic is rkyv.
+- **All-rkyv except nexus.** Nexus text is the *only* non-rkyv
+  messaging surface in the system. Every other wire / storage
+  format — client-msg, criome-msg, future lojix-msg, sema
+  records, lojix-store index entries — is rkyv. No
+  compromise. All rkyv-using crates pin the *same* feature
+  set so archived types interop:
+  `default-features = false, features = ["std", "bytecheck",
+  "little_endian", "pointer_width_32", "unaligned"]`. Pinned
+  to rkyv 0.8.x. Pattern reference: `repos/nexus-schema/`.
 - **Every edit is a request.** criomed validates; requests can
   be rejected; this is the hallucination wall.
 - **Bootstrap rung by rung.** The engine bootstraps using its
