@@ -26,7 +26,7 @@ The framing question (where one frame ends on the byte stream when "the schema i
 
 ### 1.4 End-to-end sequencing
 
-A `(| KindDecl :name "KindDecl" |)` round-trip touches every layer: nexus-cli → client-msg → nexus daemon → signal → criome → sema → reply path back. **The bootstrap blocker**: querying for `KindDecl` requires `KindDecl` to exist as a record in sema, but sema starts empty. Resolution: genesis-via-nexus per architecture.md §10. **Pre-Stage-A milestones M0-M5 are sequenced below.** Total estimate ~9-10 days of focused body-fill work given current skeleton.
+An `(Assert (Node :slot 1 :id "criomed" :label "..." :shape Rect))` round-trip touches every layer: nexus-cli → client-msg → nexus daemon → signal → criome → sema → reply path back. **No bootstrap blocker** in the flow-graph framing: criomed's validator recognises a small fixed set of kind names (`Node`, `Edge`, `Graph`) hardcoded in Rust; sema starts empty; the first Assert lands directly. Schema-of-schema (`KindDecl`/`FieldSpec`/etc.) is deferred to post-MVP. **Pre-Stage-A milestones M0-M5 are sequenced below.** Total estimate ~7-9 days given current skeleton.
 
 ## 2. The schema-of-schema question
 
@@ -65,14 +65,57 @@ signal now holds three concentric layers: wire envelope (Frame, handshake, reque
 
 Each milestone is independently shippable and testable. Parallel opportunities marked.
 
-### M0 — Schema-of-schema + genesis text (~1-2 days)
+### M0 — first criomed request: flow-graph kinds (~2-3 days)
+
+**Per Li 2026-04-25**: the first criomed milestone is NOT schema-of-schema. Two corrections:
+
+1. The KindDecl/FieldSpec/TypeRef/VariantDecl/CategoryDecl design above came from a machina-flavoured framing — and got machina wrong anyway. *"In machina, there is no need to say that a variant is a variant-declaration. A variant is a variant."* Don't double-wrap the metalanguage. Schema-of-schema is deferred until machina actually lands much later.
+2. The first criomed should handle **flow-graph records** — Mermaid-like diagram kinds expressed as fully-typed binary records. This unblocks designing further architecture *in sema*: subsequent design conversations produce signal frames that criomed validates and stores, building the architecture as records the engine itself can reason about.
 
 **Files**:
-- `signal/src/kind.rs` (~80 LoC): `KindDecl`, `FieldSpec`, `TypeRef`, `VariantDecl`, `CategoryDecl` with rkyv canonical derives. Per Li's signal-as-everything-criome rule.
-- `criome/genesis.nexus` (~30 lines of `(Assert (KindDecl ...))` etc.): the seed records, in actual nexus syntax (positional record form per `nexus/spec/grammar.md`).
-- `criome/src/lib.rs`: `include_str!("../genesis.nexus")` to embed at compile-time.
+- [`signal/src/flow.rs`](https://github.com/LiGoldragon/signal/blob/main/src/flow.rs) (~60 LoC): `Node`, `Edge`, `Graph` + their companion enums (`NodeShape`, `EdgeStyle`, `GraphDirection`). rkyv canonical derives.
+- `criome/src/lib.rs`: a `const KNOWN_KINDS: &[&str] = &["Node", "Edge", "Graph"];` plus a `match` in the validator's schema-check that accepts these and rejects everything else with `E0001`.
+- nexus daemon's parse-table: recognise these kinds in nexus text, build `signal::Request::Assert(AssertOp { record: ... })`.
 
-**Output**: signal cargo check green; criome compiles with embedded genesis text (not yet dispatched).
+**Output**:
+- `nexus-cli '(Assert (Node :slot 1 :id "criomed" :label "Sema engine" :shape Rect))'` → accepted, persisted.
+- `nexus-cli '(| Node :id "criomed" |)'` → returns the asserted Node.
+
+**Why flow-graphs instead of schema-of-schema**:
+- Immediately useful: every architectural conversation produces records criomed can store, so design accumulates *in* sema instead of in markdown.
+- Avoids the meta-modeling tar-pit (KindDecl describing kinds describing fields…).
+- Aligns with rung-by-rung bootstrap: rung 1 = "criomed processes a request and decides what to do"; the records it processes are the *next* rung's substrate. Schema-of-schema is much later.
+- Concrete: 60 lines of types + ~100 lines of validator hardcoded to three kind names. Done in days.
+
+### Sketch — `signal/src/flow.rs`
+
+```rust
+pub struct Node {
+    pub id: String,        // human-readable: "criomed", "B"
+    pub label: String,     // display text
+    pub shape: NodeShape,
+}
+pub enum NodeShape { Rect, Round, Diamond, Cylinder, Subroutine, Hexagon, Parallelogram }
+
+pub struct Edge {
+    pub from: Slot,
+    pub to: Slot,
+    pub label: Option<String>,
+    pub style: EdgeStyle,
+}
+pub enum EdgeStyle { Solid, Dashed, Thick, Bidirectional }
+
+pub struct Graph {
+    pub title: String,
+    pub direction: GraphDirection,
+    pub nodes: Vec<Slot>,
+    pub edges: Vec<Slot>,
+    pub subgraphs: Vec<Slot>,  // optional nesting
+}
+pub enum GraphDirection { TopDown, LeftRight, BottomTop, RightLeft }
+```
+
+This is enough to express a useful subset of Mermaid. Extensions (clusters, conditional edges, swimlanes) land as Mermaid demands surface.
 
 ### M1 — UDS listener + framing (~2 days)
 
@@ -126,7 +169,7 @@ Each milestone is independently shippable and testable. Parallel opportunities m
 **Files**:
 - `nexus-cli/src/main.rs` (~50 LoC): clap argv parse; build `client_msg::Request::Send { nexus_text }`; encode rkyv frame; connect to nexus daemon UDS; write frame; read reply frame; print reply text.
 
-**Output**: `nexus-cli '(| KindDecl :name "KindDecl" |)'` (or whatever exact pattern syntax the nexus grammar settles on — see `nexus/spec/`) returns the bound seed `KindDecl` record. **Stage A complete.**
+**Output**: `nexus-cli '(| Node :id "criomed" |)'` returns the bound `Node` record asserted earlier. **Stage A complete.** The architecture of every subsequent milestone is itself stored in sema as `Graph`/`Node`/`Edge` records — design happens in the engine.
 
 ## 4. Dependency graph
 
@@ -197,7 +240,7 @@ Even before all of M1, the absolute smallest committable progress: **criome and 
 
 ## 9. What this report does *not* recommend
 
-- **Don't scaffold criome-schema as a separate crate yet.** Add `kind.rs` to signal. (Schema-of-schema is criome data; signal is the home for criome data per the signal-as-everything-criome rule.)
+- **Don't scaffold schema-of-schema yet.** First milestone is flow-graphs (`Node`/`Edge`/`Graph` in `signal/src/flow.rs`); machina + KindDecl/FieldSpec/etc. wait until the engine has been used to design them via flow-graph records first.
 - **Don't implement cascade in M3.** Stage A has no rules. Cascade body-fill is post-Stage-A (bootstrap stage D per arch.md §10).
 - **Don't optimize rkyv read paths.** 5-15% CPU is below the I/O floor. Profile after Stage A.
 - **Don't write integration tests against a live UDS yet.** Use in-process `Frame::encode` ↔ `Frame::decode` round-trips for M0-M3. UDS integration test lands at M5.
