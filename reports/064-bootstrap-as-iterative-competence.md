@@ -84,7 +84,7 @@ actual progression composes by what's most needed next:
 | **E** | requests authorised against capability records | capability validator exercised; multi-principal real |
 | **F** | a Compile request is dispatchable | lojixd, lojix-msg, rsc body, lojix-store body all enter |
 | **G** | rsc-projected crates compile via nix | the compile loop closes |
-| **H** | engine's own crates begin records-authoring | per reports/051 §Q3 sequence |
+| **H** | engine's own crates begin records-authoring | per the self-hosting gradient (architecture.md §2 Invariant A) |
 | **Z** | every canonical crate runs records-authored | self-host close per reports/061 §1.12 |
 
 Each stage is operational at its level. We do not skip ahead.
@@ -221,8 +221,8 @@ for follow-up agent rounds when these become near-term:
 - **Validator pipeline shape in criomed.** Where schema-check,
   ref-check, invariant-check, capability-check fit; how
   they're ordered; what state they share; what the failure
-  channel looks like. reports/017 has fragments; reports/033
-  has more; needs synthesis.
+  channel looks like. reports/033 has fragments; needs
+  synthesis.
 - **`nexus-schema` v0.0.1 lock.** What goes in (seed kinds,
   contract types) vs what's left to user-authored extensions
   (most code records).
@@ -256,10 +256,10 @@ term. Sketch only:
   (lojix monolith + horizon-rs + CriomOS-as-configured) per
   reports/061 §3.2 starts being absorbed in this region.
 - **H** (engine self-authoring begins). Li / agents author
-  `nota-serde-core`, `nexus-schema`, etc. as records (per
-  reports/051 §Q3 sequence). Each crate flips when its
-  records-authored binary matches the hand-written one's
-  behaviour.
+  `nota-serde-core`, `nexus-schema`, etc. as records along the
+  self-hosting gradient (architecture.md §2 Invariant A). Each
+  crate flips when its records-authored binary matches the
+  hand-written one's behaviour.
 - **Z** (close). Criomed runs from a records-authored binary.
 
 Each later stage is a direction, not a plan. We do not
@@ -299,9 +299,9 @@ the right framing. This report does:
   the seed's purpose is criomed's decision-making, not rsc
   testing; rsc doesn't enter the picture for many stages.
 
-Open question on Stage A's exact kind set is in
-[reports/067](067-what-to-implement-next.md) §Q-α — the
-~15-kind v0.0.1 list awaiting Li's confirmation.
+Stage A's exact kind set emerges from what the criome-msg
+verbs need to express (per [reports/070 §6](070-nexus-language-and-contract.md)),
+not from a pre-listed taxonomy. See [reports/076 §3.4](076-corpus-trim-and-forward-agenda.md).
 
 ---
 

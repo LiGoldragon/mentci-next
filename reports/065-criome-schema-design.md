@@ -56,7 +56,7 @@ distinct purposes:
 
 After first boot the in-sema KindDecls and the Rust types
 must agree (verified at every subsequent boot per
-reports/051 §Q4; hard-fail on schema skew).
+architecture.md §10 reject-loud rule; hard-fail on schema skew).
 
 ### 1.3 · Six groups of records
 

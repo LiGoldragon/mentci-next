@@ -147,8 +147,8 @@ family crates. Not a contradiction — it's the structure.
 - Conceptually clean: sema vocabulary in `nexus-schema`; lojix
   vocabulary in `lojix-schema`. Symmetric per the pillar split.
 
-This supersedes the plan in [reports/017 §1](017-architecture-refinements.md)
-that placed Opus/Derivation inside nexus-schema.
+This supersedes an earlier plan that placed Opus/Derivation
+inside nexus-schema.
 
 ### `nexus-schema` → `sema-schema` rename (potential)
 

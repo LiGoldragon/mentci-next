@@ -3,7 +3,7 @@ title: Edit UX freshly reconsidered under Li's ratified invariants
 author: Claude Opus 4.7
 date: 2026-04-24
 status: research synthesis; supersedes 052 where the sharper invariants change it
-feeds: reports/031 §P1.1; reports/013 grammar; reports/054 triangle
+feeds: reports/031 §P1.1; reports/013 grammar
 supersedes: reports/052 §3 LLM-translator recommendation; reports/052 §7.2 Rust→nexus translator as Phase-1
 ---
 
