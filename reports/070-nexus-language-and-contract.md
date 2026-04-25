@@ -378,8 +378,11 @@ Five distinguishing-by-design properties:
 ## 6 · The criome-msg contract
 
 The wire format that crosses nexusd ↔ criomed (and within
-criomed → criomed cluster, sketched). Length-prefixed rkyv
-frames over UDS. Every field type below is rkyv-archivable.
+criomed → criomed cluster, sketched). Every wire message is
+two rkyv archives concatenated: an archived `u32` (big-endian)
+carrying the body length, then the archived `Frame`. All-rkyv
+wire — no raw-byte primitives. Every field type below is
+rkyv-archivable.
 
 ### 6.1 · Frame envelope
 
