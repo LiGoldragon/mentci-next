@@ -86,19 +86,21 @@ client                              daemon
   │                                    │
 ```
 
-The reply *form* mirrors the request form, with the same sigil discipline:
+Replies are **typed messages** — records with a known shape. Two kinds carry every reply position:
 
-| Request | Reply |
+- **`(Ok)`** — success acknowledgement. Empty record kind in `signal/src/flow.rs`.
+- **`(Diagnostic …)`** — failure with reasons. Existing kind.
+
+| Request | Reply at the same position |
 |---|---|
-| `(R …)` | `(R …)` — the record (with assigned slot encoded) |
-| `~(R …)` | `~(R …)` — the new record version |
-| `!(R …)` | `!(R …)` — the retracted record (last echo) |
-| `?(R …)` | `?(R …)` — the would-be record |
-| `(\| pat \|)` | `[<r1> <r2> …]` — sequence of matches |
-| `[\| ops \|]` | `[\| reply1 reply2 … \|]` — per-op replies in batch |
-| any of the above on failure | `(Diagnostic …)` — at that reply position |
+| `(R …)` Assert | `(Ok)` or `(Diagnostic …)` |
+| `~(R …)` Mutate | `(Ok)` or `(Diagnostic …)` |
+| `!(R …)` Retract | `(Ok)` or `(Diagnostic …)` |
+| `?(R …)` Validate | `(Ok)` if it would succeed; `(Diagnostic …)` if it would fail |
+| `(\| pat \|)` Query | `[<r1> <r2> …]` — sequence of matching records |
+| `[\| ops \|]` Atomic batch | `[(Ok) (Ok) (Diagnostic …) (Ok)]` — one outcome per item; if any `Diagnostic`, the whole batch rolled back |
 
-Same shape both directions. Position pairs them. No new tags, no new keywords.
+The reply distinguishes by content: a sequence of `(Ok)` / `(Diagnostic)` is an edit-outcome reply; a sequence of records is a query reply. Position pairs to the request. No correlation IDs, no new keyword kinds.
 
 ---
 
