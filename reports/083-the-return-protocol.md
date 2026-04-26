@@ -32,7 +32,7 @@ Two distinct wire formats, one for each audience.
 
 ## What is signal?
 
-Signal is the **internal binary form** of nexus. Same record kinds, same verbs, same sigils — encoded in rkyv (zero-copy, deterministic, schema-driven binary) instead of text. It exists for one reason: **the nexus daemon and criome talk to each other thousands of times per user request, and they should not be parsing text at every hop**.
+Signal is the **native binary form** of the records criome holds. Same record kinds, same verbs, same sigils — encoded in rkyv (zero-copy, deterministic, schema-driven binary) instead of text. It exists because **criome is sema, and sema is by definition directly computer-cognizable**. The bytes a record occupies at rest *are* its meaning — no parsing, no interpretation. The canonical form is binary; text is a translation layer for human convenience.
 
 A signal frame has the same structure as the nexus expression it represents. Where nexus says:
 
