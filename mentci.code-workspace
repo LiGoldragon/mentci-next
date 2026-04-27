@@ -11,6 +11,8 @@
     { "name": "lojix-schema", "path": "/home/li/git/lojix-schema" },
     { "name": "lojix-store", "path": "/home/li/git/lojix-store" },
     { "name": "nota", "path": "/home/li/git/nota" },
+    { "name": "nota-codec", "path": "/home/li/git/nota-codec" },
+    { "name": "nota-derive", "path": "/home/li/git/nota-derive" },
     { "name": "nota-serde", "path": "/home/li/git/nota-serde" },
     { "name": "nota-serde-core", "path": "/home/li/git/nota-serde-core" },
     { "name": "horizon-rs", "path": "/home/li/git/horizon-rs" },

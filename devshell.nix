@@ -8,6 +8,8 @@ let
     # sema-ecosystem
     "criome"
     "nota"
+    "nota-codec"
+    "nota-derive"
     "nota-serde-core"
     "nota-serde"
     "nexus"
