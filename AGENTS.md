@@ -83,6 +83,12 @@ Small reports are fine — the report doesn't have to be large. Acknowledgements
 
 **Use relative paths in reports.** When a report references files in sibling repos, link via [`../repos/<name>/...`](../repos/) (the workspace symlinks), not via GitHub URLs. The author reads in Codium and clicks links to open files locally; GitHub URLs break that flow. Absolute paths to `~/git/` also don't open in the editor.
 
+## Thinking discipline — every reusable verb belongs to a noun
+
+Read [`repos/tools-documentation/programming/abstractions.md`](repos/tools-documentation/programming/abstractions.md) before writing free functions. The discipline applies to any language with method dispatch: behavior lives on types, not as floating verbs. The rule's purpose is to force the question "what type owns this verb?" — when the answer isn't obvious, the model of the problem isn't fully formed yet, and slowing down to find the noun is the load-bearing cognitive event.
+
+Especially load-bearing for LLM-generated code, which lacks the tactile friction that makes humans economize on type creation: declaring a `struct` and declaring a `fn` cost the same number of tokens, so without the rule, agents default to the shorter shape and the noun never gets named. Full research backing in [`reports/096-methods-on-types-research-2026-04-27.md`](reports/096-methods-on-types-research-2026-04-27.md).
+
 ## Naming — full words by default
 
 Identifiers are read far more than they are written. Cryptic abbreviations optimize for the writer (a few keystrokes saved) at the reader's expense (one mental lookup per occurrence). The empirical literature is unanimous on this; the cultural inertia toward `ctx` / `tok` / `de` / `pf` is fossil from 6-char FORTRAN, 80-column cards, and 10-cps teletypes — none of which still apply. See [`reports/092`](reports/092-naming-research-and-rule.md) for the full research.
