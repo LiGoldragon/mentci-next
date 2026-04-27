@@ -350,11 +350,16 @@ runtime is small and stable; derives are the volume.
 
 ## 6 · Wire-format choices — settled
 
-### 6.1 `Option<T>` — trailing-omission
+### 6.1 `Option<T>` — explicit `None`, always emitted *(reversed from original design)*
 
-`Option<T>` fields appear at the end of records. None means
-the field is omitted from the wire; Some means the field is
-present.
+**Original plan**: trailing-omission encoding (None = field
+omitted from wire). **Implementation reversed this** because
+trailing-omission only works at the tail — mid-record
+`Option<T>` fields can't distinguish "absent" from "next
+field's value." Symmetric is better than clever: encoder
+always writes an explicit `None` ident; decoder accepts BOTH
+explicit `None` AND trailing-omission (the latter as a
+backward-compat path for legacy data).
 
 ```rust
 pub enum MutateOperation {
@@ -363,17 +368,21 @@ pub enum MutateOperation {
 }
 ```
 
-Wire forms:
-- None: `~(Node 100 (Node "User"))` — three positions
-- Some(5): `~(Node 100 (Node "User") 5)` — four positions
+Wire forms (encoder):
+- None: `~(Node 100 (Node "User") None)` — explicit None
+- Some(5): `~(Node 100 (Node "User") 5)`
 
-The derive enforces a compile-time rule: in any record
-deriving `NotaRecord` or `NexusVerb`, all `Option<T>` fields
-must come after all non-`Option` fields. This is good Rust
-style anyway; the derive just makes it required.
+Decoder accepts:
+- `~(Node 100 (Node "User") None)` — canonical
+- `~(Node 100 (Node "User"))` — backward-compat trailing-omission
 
-The decoder peeks for record-end after each optional field
-position. Trivial loop, no special parser state.
+`Option<T>` may appear anywhere in a record (no tail
+restriction).
+
+One ambiguity to know about: `Option<String>` cannot
+distinguish the literal string `"None"` from the absent
+value when the literal is bare. Quote the literal
+(`"None"`) to disambiguate.
 
 ### 6.2 Struct-variant verbs — positional
 
@@ -470,7 +479,40 @@ The new code is uniformly *our verb vocabulary*.
 
 ---
 
-## 8 · Migration — single rip-and-replace, no parallel period
+## 8 · Migration — single rip-and-replace, no parallel period *(landed 2026-04-27 with these deviations)*
+
+**Deviations from the §8 plan that actually shipped:**
+
+- `AtomicBatch` and `BatchOperation` did **not** end up
+  deriving `NexusVerb` / `NotaRecord`. Their wire form per
+  the nexus grammar is `[| op1 op2 |]` with sigil-dispatched
+  inner operations (`(Node …)` for assert, `~(Node …)` for
+  mutate, `!slot` for retract) — that switching-by-sigil
+  doesn't fit any uniform derive shape. Both types stay
+  rkyv-only for M0; a hand-written `NotaEncode` /
+  `NotaDecode` lands at M1+ alongside `Decoder::next_request`
+  growing a `[|` opener case.
+- `Reply` / `OutcomeMessage` / `Records` / `Frame` / `Body` /
+  `Request` / `HandshakeRequest` / `HandshakeReply` /
+  `HandshakeRejectionReason` / `ProtocolVersion` /
+  `AuthProof` / `Diagnostic` / `DiagnosticSuggestion` /
+  `DiagnosticSite` all stay rkyv-only too. `Reply` shape is
+  per-position-pairing (FIFO), not record-head-dispatch — no
+  uniform derive applies. Diagnostics get rendered ad-hoc by
+  the nexus daemon. Handshake messages never cross the text
+  boundary at all.
+- A 6th derive shipped that wasn't in the §1 vocabulary:
+  **`NotaTryTransparent`** — for newtypes whose construction
+  is fallible (`SshPubKey(String)` validating ed25519 base64,
+  `Ipv6Addr`-parseable strings, hex digests, etc.). Decoder
+  routes through `Self::try_new(inner) -> Result<Self, E>`
+  and maps the user's error into `Error::Validation` via
+  `Display`. Surfaced by the horizon-rs migration agent.
+
+**Otherwise the §8 plan landed as designed.** Original
+sequence reproduced below for the historical record.
+
+
 
 Currently nothing consumes the serde-derived path at runtime
 — criome and the nexus daemon are stubs. So no parallel-derives
