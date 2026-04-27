@@ -560,11 +560,12 @@ classDiagram
     }
 
     class AtomicBatch {
+        <<rkyv-only>>
         operations: Vec~BatchOperation~
     }
 
     class BatchOperation {
-        <<NexusVerb>>
+        <<rkyv-only>>
         Assert(AssertOperation)
         Mutate(MutateOperation)
         Retract(RetractOperation)
