@@ -16,8 +16,9 @@ project into **three surfaces**:
    *is* a working ractor-based actor runtime. Not a passive data
    structure; the emitted code is the running system.
 3. **mentci UI** — renders the graph visually in real time; user
-   gestures (click, drag) translate into signal edit messages, criome
-   validates, the UI reflects the accepted change.
+   gestures (click, drag, typing — the keyboard counts) translate into
+   signal edit messages, criome validates, the UI reflects the
+   accepted change.
 
 Criome remains the single source of truth and the only validator. The
 three surfaces are *projections*, never independently authoritative.
