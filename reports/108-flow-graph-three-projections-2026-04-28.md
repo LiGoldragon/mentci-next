@@ -147,8 +147,36 @@ User gestures translate into signal edit messages:
 | Edit a box's name | `Mutate(Node)` | `{ slot, new, expected_rev }` |
 | Bulk-edit (rename + retype) | `AtomicBatch([…])` | sequence of operations |
 
-Each gesture becomes one signal message. mentci shuttles it to
-`criome-daemon` (path TBD: see open question 5).
+Each *committed* gesture becomes one signal message. mentci shuttles
+it to `criome-daemon` (path TBD: see open question 5).
+
+### Local in-flight buffer — typing isn't keystroke-by-keystroke
+
+A "gesture" in the table above is a **committed intent**, not every
+mid-flight keystroke or pixel of mouse movement. Typing the name of a
+new node, dragging a wire mid-air, hovering over a candidate target —
+these are buffered locally in the UI and become signal messages **only
+on commit** (Enter, mouse-up on a valid drop target, explicit "submit"
+action). Otherwise mentci would flood criome with a request per
+keystroke, and criome would validate-and-reject most of them.
+
+This doesn't violate the "mentci never holds state that contradicts
+criome" rule — in-flight buffer state isn't *contradicting* criome,
+it's *pending input that hasn't been submitted yet*. The cursor is in
+a text input; the wire is following the mouse; the new-node placeholder
+hasn't been asserted yet. None of that exists in sema until commit.
+
+The table's gesture rows are therefore **commit-time atoms**:
+
+- "Edit a box's name" = the user finished typing and pressed Enter →
+  one `Mutate(Node)`.
+- "Drag a wire" = mouse-down on source, drag, mouse-up on target →
+  one `Assert(Edge)` if the drop landed validly; nothing if the user
+  dropped in dead space.
+- "Drag a new box onto canvas" = the type-and-place gesture finishes
+  with the placement + name commit → one `Assert(Node)`. Or
+  potentially `AtomicBatch([…])` if the user wired some initial edges
+  in the same "create" gesture (see open question 11).
 
 ### The accept-and-reflect loop
 
@@ -319,6 +347,18 @@ The deep dive surfaces decisions that gate concrete design work:
     graph in mentci? (Self-rendering of the running system.) Worth
     flagging now if it's the long-term direction — it would shape
     `Subscribe` semantics and the runtime's introspection surface.
+
+11. **Composite-gesture atomicity.** Some user actions naturally bundle
+    multiple sema mutations: "create a node and wire it to two
+    existing nodes" is conceptually one intent but three signal
+    messages (`Assert(Node)` + 2 × `Assert(Edge)`). Two shapes:
+    - Each sub-action commits independently — the UI accumulates
+      partial results; if one fails, the prior succeeded ones stay.
+    - The whole gesture wraps in `AtomicBatch([…])` — all-or-nothing.
+    The first shape is simpler; the second matches user mental model
+    of "create *this thing*" being one step. Probably both have a
+    place — the UI offers "atomic mode" via a modifier key or a
+    deliberate "begin / end transaction" affordance.
 
 ## 9 · Where this report leaves to implementation
 
