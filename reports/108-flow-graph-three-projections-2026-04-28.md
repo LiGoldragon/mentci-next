@@ -56,6 +56,30 @@ multigraph, with extension at both vertex-kind and edge-kind levels.
 
 The records live in sema; everything downstream reads from there.
 
+### Honest scope — what `KindDecl` is for, today
+
+The closed-loop story for `KindDecl` is "records describe types,
+criome respects them, `rsc` emits Rust per record kind." **That loop
+can't close until M5+** — until then, new types come from new Rust
+code in `signal/src/*` (write the struct, add it to the closed enum,
+propagate through criome's hand-coded dispatch). The Rust enum is the
+real authority; `KindDecl` records, if asserted into sema, are *inert
+metadata* — criome stores them and returns them on Query but doesn't
+enforce against them.
+
+`KindDecl` earns its keep when:
+
+1. **mentci's UI** reads `KindDecl` from sema to know what fields a
+   `Node` has, without hard-coding that knowledge in mentci itself
+   (M3/M4 time).
+2. **`rsc`** consumes `KindDecl` as input to per-kind emission
+   templates (M5).
+
+Before either reader exists, `KindDecl` is forward-looking
+scaffolding. The naming-rule violation (`Decl` → `Declaration`) plus
+the question of whether the type should exist at all in M0 is open
+question 12 in §8.
+
 ## 3 · Projection 1 — nexus text (already shipping)
 
 ```
@@ -359,6 +383,23 @@ The deep dive surfaces decisions that gate concrete design work:
     of "create *this thing*" being one step. Probably both have a
     place — the UI offers "atomic mode" via a modifier key or a
     deliberate "begin / end transaction" affordance.
+
+12. **`KindDecl` — naming + role in M0.** Two conjoined decisions:
+    - **Naming**: `Decl` violates the full-English rule
+      (`tools-documentation/programming/naming-research.md`). Spelled
+      out is `KindDeclaration`. Or rethink the noun entirely —
+      `KindDefinition` if "definition" reads better than "declaration";
+      something else if neither captures the role.
+    - **Role in M0–M4**: as §2 notes, `KindDecl` is currently inert
+      metadata — criome stores it but doesn't enforce against it.
+      Path A: drop `KindDecl` from signal until `rsc` or mentci
+      earns it (M5+); cleaner M0, less dead weight, re-add when a
+      real reader exists. Path B: keep it, mark explicitly inert in
+      docs ("descriptive only until M5; the closed Rust enum is the
+      authoritative type system today"); future agents don't get
+      confused about authority. Path A is the simpler default per
+      the discipline of not introducing scaffolding before its
+      reader exists.
 
 ## 9 · Where this report leaves to implementation
 
