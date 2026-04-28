@@ -12,13 +12,14 @@ A flow graph is a set of records in criome's sema. The same records
 project into **three surfaces**:
 
 1. **nexus text** — already shipping; the text edit/inspect surface.
-2. **runtime creation orchestrated by `lojix-daemon`** — the
-   pipeline's code-emission phase is `prism` (records → `.rs` source
-   files); lojix-daemon owns the surrounding work — directory
-   assembly, dependency resolution, compiler invocation via
-   nix-via-crane-and-fenix, artifact landing in lojix-store. The
+2. **runtime creation orchestrated by `lojix-daemon`** — `prism`
+   emits `.rs` from the records (records → `.rs` source files);
+   lojix-daemon orchestrates the surrounding work via existing
+   `lojix-schema` verbs (`RunNix` for the nix-via-crane-and-fenix
+   compile, `BundleIntoLojixStore` for the artifact landing). The
    emitted code is a working ractor-based actor runtime; what runs
-   is the system the records describe.
+   is the system the records describe. Full flow lives in
+   [`criome/ARCHITECTURE.md` §7](../repos/criome/ARCHITECTURE.md).
 3. **mentci UI** — renders the graph visually in real time; user
    gestures (click, drag, typing — the keyboard counts) translate into
    signal edit messages, criome validates, the UI reflects the
@@ -91,20 +92,27 @@ this design.**
 ## 4 · Projection 2 — runtime creation via `lojix-daemon` (prism emits the source)
 
 The records-to-runtime path is owned by **`lojix-daemon`**, not by
-`prism` alone. lojix-daemon's pipeline runs five phases:
+`prism` alone. The flow is documented in
+[`criome/ARCHITECTURE.md` §7 — Compile + self-host loop](../repos/criome/ARCHITECTURE.md):
+on a `Compile` request, criome reads the Opus + transitive OpusDeps
+from sema, prism emits `.rs` from those records, lojix-daemon
+assembles the scratch workdir (the emitted `.rs` + `Cargo.toml` +
+`flake.nix` + crane glue), criome dispatches `RunNix` to lojix
+which compiles via nix-via-crane-and-fenix, lojix runs
+`BundleIntoLojixStore` (copy-closure, RPATH rewrite via patchelf,
+deterministic bundle, blake3 hash, write under
+`~/.lojix/store/<blake3>/`), and criome asserts a `CompiledBinary`
+record back to sema.
 
-1. **Directory assembly** — set up the scratch workdir layout.
-2. **Code emission via `prism`** — records → `.rs` source files. ←
-   this is prism's job; the rest is the daemon's.
-3. **Dependency resolution** — generate `Cargo.toml` + `flake.nix` +
-   lockfile bumps.
-4. **Compilation** — invoke nix-via-crane-and-fenix; rustc runs
-   inside.
-5. **Artifact landing** — output binary into lojix-store under a
-   blake3-hashed path.
-
-The rest of this section focuses on prism's phase — the code-
-emission shape — since that's where the macro-programming happens.
+**`prism` is the code-emission piece**; the orchestration around
+it is criome+lojix-daemon owning the existing
+[`lojix-schema`](../repos/lojix-schema/) verbs (`RunNix`,
+`BundleIntoLojixStore`, `MaterializeFiles`). The rest of this
+section focuses on prism's piece — the code-emission shape —
+since that's where the macro-programming happens. The exact
+shape of how lojix-daemon orchestrates internally is open until
+lojix-daemon is built; today it's "skeleton-as-design" (see
+[`lojix/ARCHITECTURE.md`](../repos/lojix/ARCHITECTURE.md)).
 
 `prism` reads flow-graph records from sema and emits Rust source code.
 Crucially, this is **macro programming**, not naive code generation:
@@ -317,14 +325,27 @@ Tentative — depends on Li's answers below.
 
 The deep dive surfaces decisions that gate concrete design work:
 
-1. **Which node kinds anchor the first emission?** The macro-emission
-   path needs a small closed set of typed node-kind structs in signal
-   for M5. `Node` / `Edge` / `Graph` carry no per-kind semantics by
-   themselves. What are the first concrete kinds — Source /
-   Transformer / Sink? Or domain-specific (e.g. validator-stage
-   kinds for criome's own request flow)? The choice frames the
-   rest of the design — both signal's new types and prism's first
-   emission templates.
+1. **~~Which node kinds anchor the first emission?~~** **RESOLVED** —
+   Li 2026-04-28: the tentative trio is reasonable, extend it via
+   research on dynamic-systems node taxonomies. Survey of Akka
+   Streams, Reactor, Flink, Storm, Kafka Streams, OTP, FBP/NoFlo,
+   DSP, process calculi, and Petri nets converged on a closed set
+   of **5 first kinds**:
+   - **Source** — zero fan-in, emits from external boundary.
+   - **Transformer** — 1→1, per-message processing.
+   - **Sink** — zero fan-out, consumes to external boundary.
+   - **Junction** — fan-in>1 or fan-out>1, topology-only (Merge,
+     Broadcast, Balance, Zip).
+   - **Supervisor** — owns lifecycle, no data flow; maps directly
+     onto ractor's `spawn_linked`.
+
+   Anti-recommendations (don't adopt): DSP `Filter` (analog
+   semantics), Petri `Place` (passive token-holder), separate
+   `Mixer`/`Splitter` (collapse into `Junction`),
+   `gen_event`/`gen_statem` (those are edge kinds, already covered
+   by `RelationKind`), Storm `Spout`/`Bolt` (coarseness), FBP
+   `Process` (too generic), `Composite`/`Subnet` (handle as graph
+   operation, not as a kind).
 
 2. **Smallest first demo graph.** The minimum viable end-to-end
    demonstration of the macro path. Candidate: encode criome's M0
@@ -333,34 +354,50 @@ The deep dive surfaces decisions that gate concrete design work:
    test pass against the prism-emitted binary instead of the hand-coded
    one.
 
-3. **`prism`'s emission shape — proc-macro, build-script, or standalone
-   binary?** Three options:
-   - Proc-macro reading from sema at compile time (like `sqlx::query!`
-     reads schema). Tightest integration; demands proc-macro access
-     to a running criome.
-   - `build.rs` calling out to `prism` to emit `.rs` files into
-     `OUT_DIR` before the main compile. Decoupled from the runtime;
-     the standard cargo path.
-   - Standalone CLI that emits `.rs` source into a workdir; `cargo`
-     builds it as a normal crate. Closest to lojix's existing shape.
-   The "macro programming" framing leans toward (a); the operational
-   simplicity points at (c).
+3. **~~`prism`'s emission shape — proc-macro, build-script, or
+   standalone binary?~~** **RESOLVED** — Li 2026-04-28: prism is a
+   **library**. Not a CLI ("no reason to make it a CLI"). A
+   proc-macro entry could land later as a secondary surface, but
+   proc-macro alone wouldn't be enough — `lojix-daemon` (Rust) needs
+   to call into prism as part of its runtime-creation orchestration,
+   and that is a library call. The library reads flow-graph records
+   (in-memory or via a sema reader) and emits Rust source (in-memory
+   or to disk).
 
-4. **mentci UI tech.** Native Rust GUI (`egui`, `iced`, `gpui`)? Web
-   (egui-via-wasm, htmx + SSE from a mentci-daemon, leptos)? Terminal
-   (`ratatui`)? The "real-time" requirement and the gesture-driven
-   editing both constrain this. Each option has very different
-   implications for the project's nix-build story.
+4. **~~mentci UI tech.~~** **RESOLVED** — Li 2026-04-28: Linux desktop
+   only; pick from the top three Rust desktop frameworks for a
+   real-time graph canvas with gesture-driven editing **and**
+   interactive custom shapes (a wheel the user can rotate
+   interactively; eventually astrological charts with rotatable
+   inner/outer rings). Top 3 ranked:
+   1. **egui** — immediate-mode, `egui::Painter` does arbitrary 2D
+      including rotation transforms,
+      [`egui-graph-edit`](https://github.com/kamirr/egui-graph-edit)
+      exists as a turnkey starting point, clean nix builds via
+      wgpu/glow. **Recommended.** Immediate-mode is the natural fit
+      for a daemon-pushed truth-source where every frame redraws
+      from current state.
+   2. **iced** — Elm-architecture, retained-mode, what System76's
+      cosmic desktop uses; `Canvas` widget with bezier paths +
+      caches; better if the UI grows lots of form chrome around
+      the canvas.
+   3. **gpui** — Zed's framework on `wgpu`; highest perf ceiling
+      but you'd be pinned to Zed's monorepo / vendored fork.
 
-5. **mentci ↔ criome connection — direct UDS or via nexus-cli?** Two
-   shapes:
-   - mentci speaks signal directly over UDS, mirrors `nexus-daemon`'s
-     CriomeLink. Lower latency, fewer hops, but mentci grows a signal
-     speaker.
-   - mentci shells out to `nexus-cli` per gesture. Reuses existing
-     protocol surface, slower, requires per-gesture process spawn.
-   The first shape is the natural one for real-time editing; the
-   second only makes sense for one-off scripted tools.
+   Disqualified: druid (archived), slint (DSL-first, awkward custom
+   canvas), dioxus-desktop (webview), makepad (wrong size+shape),
+   xilem/floem/freya (still pre-1.0).
+
+5. **~~mentci ↔ criome connection — direct UDS or via nexus-cli?~~**
+   **RESOLVED** — Li 2026-04-28: **direct UDS, mentci speaks signal**.
+   The architectural rule (now first-class in
+   [`criome/ARCHITECTURE.md` §1](../repos/criome/ARCHITECTURE.md)):
+   criome speaks **only signal**; signal is the messaging system of
+   the whole sema-ecosystem. nexus is one front-end (text↔signal
+   gateway, for humans/agents/scripts), mentci will be another
+   (gestures↔signal). Nexus is not in mentci's path. Any future
+   client (alternative editor, headless tool, etc.) connects to
+   criome the same way — by speaking signal directly.
 
 6. **Subscribe-first vs poll-first.** mentci's UI launches before or
    after `Subscribe`? If launching pre-subscribe, mentci polls criome
@@ -379,11 +416,17 @@ The deep dive surfaces decisions that gate concrete design work:
    (machine-applicable suggestions, source spans, severity levels);
    the UX hasn't been sketched.
 
-9. **The "main repository" — confirm `mentci`.** Speech-to-text
-   couldn't transcribe the name. Working assumption: `mentci`
-   (matches its long-term role per `mentci/ARCHITECTURE.md`'s "mentci
-   is meant to replace the legacy software stack as the universal
-   UI"). Confirm or correct.
+9. **~~The "main repository" — confirm `mentci`.~~** **RESOLVED** —
+   Li 2026-04-28: yes, `mentci`. Reframing: `mentci` today is two
+   things at once — (a) the **workspace umbrella** (this repo: dev
+   shell, design corpus, agent rules, reports), and (b) a
+   **concept goalpost** (the eventual LLM-agent-assisted editor /
+   universal UI). The actual GUI implementation will land in a
+   **separate future repo** when work begins; "mentci" is the
+   working name for it in design docs until that repo is created
+   (and possibly named differently). See
+   [`mentci/ARCHITECTURE.md`](../ARCHITECTURE.md) for the long-term
+   framing.
 
 10. **Recursive rendering — long-term.** Once `prism` emits a runtime
     from records, can the runtime's own state be rendered as a flow

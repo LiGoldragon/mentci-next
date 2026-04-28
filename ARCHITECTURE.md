@@ -56,6 +56,26 @@ trim-aggressively) are the same patterns that, scaled, make a
 good universal UI. Build well now; the path forward is
 continuous, not a discontinuous reinvention.
 
+### Note on naming — current repo vs future GUI repo
+
+`mentci` today refers to **two things at once**:
+
+- **The workspace umbrella** — this repo. Dev shell, design
+  corpus (`reports/`), agent rules, workspace manifest, the
+  symlink farm under `repos/`. Where agents work when collaborating
+  on the sema-ecosystem.
+- **The concept goalpost** — the eventual LLM-agent-assisted
+  editor / universal UI described above.
+
+The **actual GUI implementation** will land in a **separate
+future repo** when work begins (per Li 2026-04-28: "we're gonna
+create another repository for the GUI part of it"). In design
+docs (e.g. [reports/108](reports/108-flow-graph-three-projections-2026-04-28.md)),
+`mentci` is the working name for the concept until that GUI repo
+is created — and the GUI repo may be named differently. The
+current repo retains the `mentci` name as the workspace umbrella;
+nothing renames here when the GUI repo is born.
+
 ## Layout
 
 ```

@@ -14,14 +14,17 @@ design report (currently 108).*
 - **Active design captured in [`reports/108`](108-flow-graph-three-projections-2026-04-28.md)** —
   flow-graph-as-shared-substrate with three projections (nexus
   text shipping, prism code-emission for runtime creation, mentci
-  UI for live render+edit). 11 open questions in §8 gate concrete
-  next-step code work.
+  UI for live render+edit). Of the 12 §8 questions, **6 resolved
+  2026-04-28 (Q1/Q3/Q4/Q5/Q9/Q12)** — see §6. The remaining 6
+  (Q2/Q6/Q7/Q8/Q10/Q11) are tactical, deferrable to M1 work.
 - **prism (renamed from rsc, 2026-04-28)** is the code-emission
-  subcomponent of `lojix-daemon`'s 5-phase runtime-creation pipeline
-  (directory assembly → prism emits .rs → dependency resolution →
-  compile → artifact landing in lojix-store). Stub today; body
-  lands once criome's record supply is wide enough + lojix-daemon
-  arrives.
+  piece of `lojix-daemon`'s runtime-creation flow; lojix-daemon
+  dispatches the existing `lojix-schema` verbs (`RunNix` for
+  compile, `BundleIntoLojixStore` for artifact landing) and
+  assembles the workdir between them. Full flow:
+  [`criome/ARCHITECTURE.md` §7 — Compile + self-host loop](../../criome/ARCHITECTURE.md).
+  Stub today; body lands once criome's record supply is wide
+  enough + lojix-daemon arrives.
 - **Path A on KindDecl** (2026-04-28): `KindDecl` + `FieldDecl` +
   `Cardinality` + `KindDeclQuery` dropped from signal entirely.
   The closed Rust enum in signal is the **authoritative type
@@ -114,9 +117,25 @@ A fresh agent reads, in this order:
 - **Reports are ephemeral.** Default to deletion. Extract to
   architecture docs or tools-documentation only when the rationale
   has no other durable home.
-- **lojix-daemon orchestrates runtime creation** (5 phases). prism
-  emits `.rs` only; lojix-daemon owns directory assembly,
-  dependency resolution, compiler invocation, artifact landing.
+- **lojix-daemon orchestrates runtime creation.** prism emits `.rs`
+  only; lojix-daemon dispatches `lojix-schema` verbs (`RunNix` to
+  compile, `BundleIntoLojixStore` to land the artifact) and
+  assembles the workdir between them. Full flow lives in
+  criome/ARCHITECTURE.md §7; the exact internal orchestration
+  shape inside lojix-daemon is open until lojix-daemon is built
+  (today: skeleton-as-design).
+- **criome speaks only signal.** Signal is the messaging system
+  of the whole sema-ecosystem. nexus is one front-end (text↔signal
+  gateway); mentci will be another (gestures↔signal). Any future
+  client connects the same way — by speaking signal directly.
+  Documented first-class in criome/ARCHITECTURE.md §1 as of
+  2026-04-28.
+- **mentci is two things at once** — the workspace umbrella (this
+  repo: dev shell, design corpus, agent rules, reports) and the
+  concept goalpost (the eventual LLM-agent-assisted editor). The
+  actual GUI implementation will land in a **separate future
+  repo**; "mentci" is the working name in design docs until that
+  repo is created.
 - **Path A on KindDecl** — schema-as-data scaffolding dropped
   entirely until prism or mentci earns it (see §0 + reports/108
   §2 + §8 Q12).
@@ -139,25 +158,43 @@ A fresh agent reads, in this order:
 (`mentci-next-dqp` "Rename rsc to a full English word" was closed
 2026-04-28 with the prism rename.)
 
-## 6 · Open work — gating Li's input
+## 6 · Open work — what's resolved + what remains
 
-The 11 questions in [`reports/108` §8](108-flow-graph-three-projections-2026-04-28.md#8--open-questions)
-are the things waiting for Li's answers before sketching code.
-Most load-bearing:
+**Resolved 2026-04-28** (see [`reports/108` §8](108-flow-graph-three-projections-2026-04-28.md#8--open-questions)
+for full text + research notes per item):
 
-- **Q1** — first node-kind structs in signal (Source / Transformer
-  / Sink? Or domain-specific to criome's request flow?). Frames
-  signal's new types and prism's first emission templates.
-- **Q3** — prism shape: proc-macro / build.rs / standalone CLI?
-  "Macro programming" framing leans proc-macro; operational
-  simplicity points at standalone.
-- **Q4** — mentci UI tech (egui / iced / gpui / web / ratatui).
-  Big nix-build implications per choice.
-- **Q5** — mentci speaks signal directly over UDS, or shells to
-  nexus-cli? Real-time editing wants direct.
-- **Q9** — confirm "main repository" name = mentci.
+- **Q1** — first node kinds: closed set of 5 = **Source /
+  Transformer / Sink / Junction / Supervisor** (extending Li's
+  tentative trio per Akka-Streams + OTP convergence research).
+- **Q3** — prism shape: **library** (Rust). Not a CLI; possibly a
+  proc-macro entry later as a secondary surface, but lojix-daemon
+  needs library calls.
+- **Q4** — mentci UI tech: **egui** (top of three; iced #2, gpui
+  #3). Linux desktop only; `egui::Painter` handles arbitrary 2D
+  including rotation transforms (interactive wheels +
+  astrological-chart-grade custom shapes long-term).
+- **Q5** — mentci ↔ criome: **direct UDS, mentci speaks signal**.
+  criome speaks only signal; nexus is one front-end (text↔signal),
+  mentci will be another (gestures↔signal).
+- **Q9** — main repo name: **mentci**, with the reframing that
+  the current repo is workspace umbrella + concept goalpost; the
+  actual GUI lands in a separate future repo.
+- **Q12** — Path A on KindDecl (resolved earlier 2026-04-28).
 
-(Q12 RESOLVED — Path A taken.)
+**Remaining open** (tactical; deferrable to M1):
+
+- **Q2** — smallest first demo graph (encode criome's M0 request
+  flow as records, prism-emit it, run integration test against
+  the prism-emitted binary).
+- **Q6** — subscribe-first vs poll-first for mentci UI live
+  updates.
+- **Q7** — edit-translation library home (inside mentci, or a
+  shared `mentci-edit` crate consumable by alternative UIs).
+- **Q8** — diagnostic UX (inline overlay, side panel, toast).
+- **Q10** — recursive rendering long-term (running runtime's
+  state rendered as a flow graph).
+- **Q11** — composite-gesture atomicity (independent commits vs
+  `AtomicBatch` per gesture).
 
 ## 7 · Lurking dangers (context worth keeping)
 
