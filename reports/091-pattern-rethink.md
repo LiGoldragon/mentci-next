@@ -250,15 +250,20 @@ it — folded into step 5.
 
 ---
 
-## 9 · What I'll do next (if approved)
+## 9 · What shipped
 
-1. Update `signal/src/pattern.rs` to drop Bind's String
-   (push to signal main).
-2. Update `signal/src/frame.rs` round-trip tests for the
-   new shape (push with above).
-3. Continue with [089](089-m0-implementation-plan-step-3-onwards.md)
-   step 3 (criome body) + the merged step 5 (daemon body
-   with the §6 parser inline).
+1. `signal/src/pattern.rs` collapsed to a re-export of
+   `nota_codec::PatternField` (the type lives in nota-codec
+   since the codec needs to pattern-match it). Bind dropped
+   its String payload per §3.
+2. The bind-name validation now lives in nota-derive's
+   `NexusPattern` derive — each `*Query` type's generated
+   `NotaDecode` impl emits a `decode_pattern_field(field_name)`
+   call that validates `@<name>` against the schema field
+   name at the position it appears.
+3. M0 step 3 (criome body) + step 5 (nexus daemon body, with
+   `Parser` and `Renderer` nouns) shipped per
+   [reports/100 §4](100-handoff-after-nota-codec-shipping-2026-04-27.md#code-state-table).
 
 ---
 

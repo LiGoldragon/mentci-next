@@ -19,7 +19,7 @@ A development environment. Its concrete responsibilities:
   Agents working in mentci see the entire ecosystem at one
   path.
 - **Design corpus.** [`reports/`](reports/) holds the evolving
-  decision-trail (currently 6 reports, soft cap at ~12 per
+  decision-trail (currently 9 reports, soft cap at ~12 per
   [AGENTS.md](AGENTS.md) "Report rollover").
 - **Workspace manifest.** [`docs/workspace-manifest.md`](docs/workspace-manifest.md)
   tracks every repo in `~/git/` with its status (CANON,
@@ -69,7 +69,9 @@ mentci/                        # local dir today is mentci-next/;
 ├── flake.nix
 ├── docs/
 │   └── workspace-manifest.md  ← every repo's status
-├── reports/                   ← decision-trail (~6, soft cap 12)
+├── reports/                   ← decision-trail (~9, soft cap 12)
+├── checks/                    ← workspace-level nix checks (linkFarm + scenario + roundtrip)
+├── lib/                       ← shared nix helpers (flake.lib.scenario)
 ├── repos/                     ← symlinks to canonical repos
 └── .beads/                    ← bd issue tracker state
 ```

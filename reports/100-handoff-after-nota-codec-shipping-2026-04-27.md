@@ -446,13 +446,24 @@ validates and stores.
 | [`../repos/nota-derive/`](../repos/nota-derive/) | ~600 | Six derives shipping: `NotaRecord`, `NotaEnum`, `NotaTransparent`, `NotaTryTransparent`, `NexusPattern`, `NexusVerb`. `NexusVerb` supports both newtype variants and struct-variants. `NotaTryTransparent` routes through `Self::try_new(inner) -> Result<Self, E>` and maps to `Error::Validation`. | 0 (compile-only) |
 | [`../repos/signal/`](../repos/signal/) | ~1100 | All `…Op` types renamed to `…Operation`. Slot/Revision/BlsG1 fields private with `From` conversions (BlsG1 hand-written). Each kind derives the right Nota/Nexus derive plus rkyv. AtomicBatch + BatchOperation kept rkyv-only (canonical `[\| op1 op2 \|]` text form needs hand-impl in M1+). Diagnostic family + Reply / Frame / Body / Request / Handshake* all rkyv-only. Tests split: `tests/frame.rs` (rkyv) + `tests/text_round_trip.rs` (text). | 42 |
 | [`../repos/sema/`](../repos/sema/) | ~140 | `Sema::open / store(&[u8]) → Slot / get(Slot) → Option<Vec<u8>> / iter() → Vec<(Slot, Vec<u8>)>`. `Slot(u64)` private field with `From<u64>` + `From<Slot> for u64`. `SEED_RANGE_END` is now `pub`. `db` → `database` and `txn` → `transaction` rename. Tests live in `tests/sema.rs` per the rule. | 10 |
-| [`../repos/nexus/`](../repos/nexus/) | ~50 | `parse.rs` deleted; `QueryParser` removed; replaced by `NexusPattern` derive in nota-derive on each `*Query` type. Cargo.toml repointed at nota-codec. Daemon body still a stub (M0 step 5). | 0 |
-| [`../repos/criome/`](../repos/criome/) | ~400 | **M0 step 3 done.** Restructured around `Daemon { sema: Arc<Sema> }` noun (methods-on-types). Per-verb logic in `impl Daemon { … }` across `handshake.rs` / `assert.rs` / `query.rs` / `dispatch.rs`. UDS `Listener` accepts connections, length-prefixed Frame I/O. Kind-tag (1-byte discriminator) prepended to every record's bytes since rkyv bytecheck doesn't catch type-punning. M0 verb scope: Handshake + Assert + Query implemented; Mutate / Retract / AtomicBatch / Subscribe / Validate return `Diagnostic E0099`. | 6 |
-| [`../repos/nexus-cli/`](../repos/nexus-cli/) | ~21 | Stub returning `Ok(())`. M0 step 6. | 0 |
+| [`../repos/nexus/`](../repos/nexus/) | ~400 | **M0 step 5 done.** Five nouns — `Daemon` / `Listener`-as-method / `Connection` / `CriomeLink` / `Parser` / `Renderer` — across `daemon.rs` / `connection.rs` / `criome_link.rs` / `parser.rs` / `renderer.rs`. Plus one-shot binaries `nexus-parse` and `nexus-render` under `src/bin/` that wrap `Parser::next_request` and `Renderer::render_reply` as stdin/stdout filters. Tests in `tests/parser.rs` (11) + `tests/renderer.rs` (9). Daemon binary is `nexus-daemon`. | 20 |
+| [`../repos/criome/`](../repos/criome/) | ~400 | **M0 step 3 done.** Restructured around `Daemon { sema: Arc<Sema> }` noun (methods-on-types). Per-verb logic in `impl Daemon { … }` across `handshake.rs` / `assert.rs` / `query.rs` / `dispatch.rs`. UDS `Listener` accepts connections, length-prefixed Frame I/O. Plus one-shot binary `criome-handle-frame` under `src/bin/` that wraps `Daemon::handle_frame` as a stdin/stdout filter against `$SEMA_PATH`. Kind-tag (1-byte discriminator) prepended to every record's bytes since rkyv bytecheck doesn't catch type-punning. M0 verb scope: Handshake + Assert + Query implemented; Mutate / Retract / AtomicBatch / Subscribe / Validate return `Diagnostic E0099`. Daemon binary is `criome-daemon`. | 6 |
+| [`../repos/nexus-cli/`](../repos/nexus-cli/) | ~50 | **M0 step 6 done.** `Client::shuttle(input) -> Result<String>` sync byte shuttle. lib + bin split; binary stays `nexus`. | 0 |
 | [`../repos/lojix-schema/`](../repos/lojix-schema/) | 112 | Typed scaffold (M2+ scope). Still has serde derives (don't migrate yet). | 0 |
 
-All crates `cargo check` clean. Total ~3900 LoC, **137
-tests passing across the system.**
+All crates `cargo check` clean. Total ~4400 LoC, **157
+unit tests + 4 integration suites passing across the system.**
+
+**Workspace-level checks** (in mentci): `nix flake check`
+runs all 7 per-crate `checks.default` (canonical
+crane+fenix per
+[`tools-documentation/rust/nix-packaging.md`](../repos/tools-documentation/rust/nix-packaging.md))
+plus the workspace-level integration suites — `integration`
+(monolithic daemon-graph shuttle), `scenario-chain`
+(daemon-mode state-persistence across restarts), and
+`roundtrip-chain` (one-shot binary mode, per-daemon
+transformation across nix derivation boundaries). 24 flake
+checks total.
 
 **Repos out of M0 scope** (M2+): lojix, lojix-cli,
 lojix-store, rsc (TRANSITIONAL), horizon-rs (separate
@@ -476,34 +487,21 @@ in full. Summary:
 - Parser (was step 4) — the `NexusPattern` derive
   subsumes what the hand-written QueryParser used to do.
 - **Step 3 — criome body.** `Daemon` + UDS + dispatch +
-  handshake + assert + query handlers. 6 integration
-  tests.
+  handshake + assert + query handlers. 6 integration tests.
+- **Step 5 — nexus daemon body.** `Daemon` / `Connection`
+  / `CriomeLink` / `Parser` / `Renderer` nouns. 20 tests.
+  Daemon binary is `nexus-daemon`.
+- **Step 6 — nexus-cli text shuttle.** `Client::shuttle()`
+  sync byte shuttle; binary `nexus`.
+- **End-to-end demo working** — `(Node "User")` → `(Ok)`,
+  `(| Node @name |)` → `[(Node "User")]`. Smoke-tested +
+  automated as nix integration test from mentci.
 
 **To do:**
-- **Step 5 — nexus daemon body** (~130 LoC):
-  [`../repos/nexus/src/`](../repos/nexus/src/)
-  - `main.rs` — bind `/tmp/nexus.sock`, accept loop.
-  - New: per-connection text shuttle that opens a paired
-    criome connection, reads text via
-    `nota_codec::Decoder::nexus(input).next_request()`,
-    forwards the resulting `signal::Frame` to criome,
-    receives the reply, renders back to text via
-    `nota_codec::Encoder::nexus()`.
-  - Diagnostic rendering is ad-hoc in this daemon (per the
-    signal/diagnostic.rs note that Diagnostic stays
-    rkyv-only).
-- **Step 6 — nexus-cli text shuttle** (~30 LoC):
-  Pure byte shuttle; no parser deps.
 - **Step 7 — `genesis.nexus` + bootstrap glue** (~50 LoC).
-
-End-to-end demo on completion: `nexus-cli example.nexus`
-where example.nexus contains `(Node "User")` and
-`(| Node @name |)`, with daemon + criome running, returns:
-
-```
-(Ok)
-[(Node "User")]
-```
+  Not blocking the demo since Node/Edge/Graph kinds are
+  built into criome's M0 body; becomes load-bearing when
+  KindDecl records are added dynamically in M1+.
 
 ---
 
@@ -530,6 +528,10 @@ where example.nexus contains `(Node "User")` and
 | **Methods on types — criome restructured around `Daemon` noun** | criome/src/daemon.rs + per-verb impl-Daemon files |
 | **Bootstrap-era allows authored macros**; eventual self-hosting state replaces them with sema-rules + rsc | criome/ARCH §"Macro philosophy" |
 | **Beauty is the criterion** — ugly code is unsolved problem | programming/beauty.md + rust/style.md §"Beauty is the criterion" |
+| **Daemon binaries carry the `-daemon` suffix** (`nexus-daemon`, `criome-daemon`, `lojix-daemon`); lib half keeps bare name | AGENTS.md §"Binary naming" |
+| **One-shot binaries** `<crate>-<verb>` for stdin/stdout glue around a single library verb (`nexus-parse`, `nexus-render`, `criome-handle-frame`) | AGENTS.md §"One-shot binaries" |
+| **Workspace-wide flake migration** to canonical crane+fenix; every CANON crate exposes `checks.default`; mentci aggregates | rust/style.md §"Nix-based tests" + nix-packaging.md + reports/101 |
+| **Two integration suites** at the workspace level: `integration` (monolithic daemon shuttle) + `scenario-chain` (state persistence) + `roundtrip-chain` (binary stability per-daemon transformation) | mentci/checks/ + mentci/lib/scenario.nix |
 
 **Rejected framings** — see
 [`../repos/criome/ARCHITECTURE.md`](../repos/criome/ARCHITECTURE.md)
@@ -594,11 +596,13 @@ where example.nexus contains `(Node "User")` and
 |---|---|---|---|
 | 074 | [pinned-features rkyv discipline](074-portable-rkyv-discipline.md) | Cited from every Cargo.toml using rkyv | DURABLE |
 | 088 | [closed-vs-open schema research](088-closed-vs-open-schema-research.md) | Research backing perfect specificity (Invariant D) | DURABLE |
-| 089 | [M0 implementation plan steps 3+](089-m0-implementation-plan-step-3-onwards.md) | M0 plan — step 3 done; steps 5/6/7 next | ACTIVE |
+| 089 | [M0 implementation plan steps 3+](089-m0-implementation-plan-step-3-onwards.md) | M0 plan — steps 3/5/6 done; step 7 (genesis.nexus) deferred but non-blocking | ACTIVE — needs refresh as execution record |
 | 091 | [pattern parser rethink](091-pattern-rethink.md) | The auto-name-from-schema rule + corrected `PatternField` shape (now in `NexusPattern` derive) | DURABLE as backing |
 | 098 | [serde-replacement decision](098-serde-replacement-decision-2026-04-27.md) | Decision report for nota-codec | DURABLE |
 | 099 | [custom-derive design](099-custom-derive-design-2026-04-27.md) | Design report — updated with shipping deviations (§6.1 explicit-None, §8 BatchOperation rollback) | DURABLE |
 | 100 | this report | Post-context-reset entry point | DURABLE — refresh as state evolves |
+| 101 | [multi-agent style audit pass](101-style-audit-pass-2026-04-27.md) | Phase 1 synthesis + Phase 2 five parallel per-repo audits; zero deep findings; closed reports/100 §10 hygiene items | SNAPSHOT |
+| 102 | [visual architecture](102-visual-architecture-2026-04-27.md) | 3 cross-repo views + 7 per-repo classDiagrams in mermaid | SNAPSHOT — regenerate when system shape changes |
 
 Re-homed research syntheses (now in
 `tools-documentation/programming/`):
@@ -637,53 +641,34 @@ bd close <id>
 
 ## 10 · Where to start work — open items in priority order
 
-Per Li (2026-04-27): *"resume the nota work after
-compaction."* That points at:
+M0 steps 3 / 5 / 6 are landed and the demo round-trips
+through the daemon graph (smoke-tested + automated as the
+nix integration test). Open items follow:
 
-### 10a · M0 step 5 — nexus daemon body (~130 LoC)
-
-The codec is ready. Need:
-- `nexus/src/main.rs` — bind `/tmp/nexus.sock`, accept loop.
-- New `nexus/src/handler.rs` (or similar): per-connection
-  text shuttle; opens a paired criome connection at
-  `/tmp/criome.sock`; loop reading text via
-  `nota_codec::Decoder::nexus(text).next_request()` →
-  build `signal::Frame` → write to criome socket → read
-  reply Frame → render back to text via
-  `nota_codec::Encoder::nexus()`.
-- Diagnostic rendering is custom (per signal's choice to
-  keep `Diagnostic` rkyv-only) — handle the
-  `Reply::Outcome(OutcomeMessage::Diagnostic(d))` arm by
-  emitting a hand-written `(Diagnostic …)` text form.
-
-### 10b · M0 step 6 — nexus-cli (~30 LoC)
-
-Pure byte shuttle. Read file or stdin → connect
-`/tmp/nexus.sock` → write → read → stdout.
-
-### 10c · M0 step 7 — genesis.nexus + bootstrap (~50 LoC)
+### 10a · M0 step 7 — genesis.nexus + bootstrap (~50 LoC)
 
 Text file at `criome/genesis.nexus` with bootstrap
 KindDecls (KindDecl itself + Node + Edge + Graph). Bootstrap
 glue in criome `main.rs`: on first boot (empty sema),
 parse genesis text via nota-codec and dispatch each Assert
-through the normal path.
+through the normal path. **Not blocking the demo** — Node /
+Edge / Graph kinds are built into criome's M0 body. Becomes
+load-bearing when KindDecl records are added dynamically in
+M1+.
 
-### 10d · End-to-end test
+### 10b · M1 next moves — criome → lojix → rsc
 
-After 5/6/7: `nexus-cli example.nexus` round-trips through
-the full daemon graph.
+Per Li 2026-04-28, the next deep design pass covers the
+criome → lojix → rsc MVP loop. Open work for that loop is
+tracked in bd: see `bd ready` and the open issues prefixed
+`mentci-next-`. Notably:
 
-### 10e · nota-codec lexer error refactor
+- `mentci-next-ef3` — self-hosting "done" moment
+- `mentci-next-0tj` — rsc records-to-Rust projection
+- `mentci-next-8ba` — M3 sema redb wrapper
+- `mentci-next-zv3` — M6 bootstrap
 
-`Error::Lexer(String)` is a transitional catch-all in
-`nota-codec/src/error.rs`. Should refactor into typed
-variants — `UnexpectedChar { byte, position }`,
-`UnexpectedEnd { while_parsing }`, `InvalidEscape { … }`,
-`InvalidNumber { … }`. ~15 lexer error sites need updating.
-Mechanical but careful work.
-
-### 10f · Encoder bare-ident emission for strings
+### 10c · Encoder bare-ident emission for strings
 
 The nota README §"Strings" says canonical form emits bare
 when eligible. Encoder currently always quotes. Adding
@@ -691,22 +676,13 @@ bare-emit when content fits a non-`true`/`false` ident class
 would shorten output and match the spec. Cosmetic — defer
 unless a real consumer asks.
 
-### 10g · Style audit residue
+### 10d · Open bd issues
 
-Per the partial style audit during this session:
-- nota-codec: largely compliant (built under discipline
-  this session); could verify with a fresh agent pass.
-- nota-derive: same.
-- nexus: minor — needs a cargo check after the daemon body
-  lands; should be clean.
-- nexus-cli: tiny stub; trivial when the body lands.
-- lojix-schema: still has serde derives. M2+ scope; defer.
-
-### 10h · Open bd issue
-
-`mentci-next-dqp` — rename `rsc` to a full English word per
-the naming rule. Out of scope for current M0 work; just
-sitting in bd.
+- `mentci-next-dqp` — rename `rsc` to a full English word
+  per the naming rule. Out of scope for M0; defer until
+  rsc moves out of stub state.
+- `mentci-next-rgs` — title says "ractor-hosted daemon" but
+  daemons are tokio-based; flagged for clarification.
 
 ---
 

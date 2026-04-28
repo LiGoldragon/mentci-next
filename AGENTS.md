@@ -172,6 +172,57 @@ There is no exception class for "feels verbose." That feeling is the bug, not th
 
 Backing research: [`repos/tools-documentation/programming/naming-research.md`](repos/tools-documentation/programming/naming-research.md) (the empirical case for full words) + [`repos/tools-documentation/programming/beauty-research.md`](repos/tools-documentation/programming/beauty-research.md) (why beauty in identifiers is the criterion, not keystroke-economy).
 
+## Binary naming — `-daemon` suffix, full English
+
+Long-running daemon binaries carry the `-daemon` suffix:
+`nexus-daemon`, `criome-daemon`, `lojix-daemon`. The library
+half of the same crate keeps the bare name (`nexus`,
+`criome`, `lojix`) — `[lib] name = "nexus"` and `[[bin]] name = "nexus-daemon"`
+in the same `Cargo.toml`. CLI binaries that the user
+invokes interactively keep bare names (`nexus`, `criome`).
+
+**Why:** `nexusd` / `criomed` are unix-folklore
+abbreviations carrying no information beyond the suffix;
+the empirical naming-research case applies. `nexus-daemon`
+reads as English; `nexusd` requires expansion. It also
+disambiguates the daemon binary from the CLI binary at PATH
+level (`nexus` the CLI vs `nexus-daemon` the long-running
+process).
+
+**How to apply:** when introducing a new daemon, name its
+binary `<name>-daemon`. The library half (if any) stays as
+the bare name. Per-process stderr log tags also use the
+suffix (`nexus-daemon: ready`).
+
+## One-shot binaries — `<crate>-<verb>` for stdin/stdout glue
+
+Beyond the daemon, several crates ship thin one-shot
+binaries that wrap a single verb of the library code as a
+stdin/stdout filter — useful for test pipelines, agent
+harnesses, and debug scripts that need a parser/encoder
+without running the daemon.
+
+Naming convention: `<crate>-<verb>`, ~30 LoC each.
+
+| Binary | What it does |
+|---|---|
+| `nexus-parse` | reads nexus text from stdin, writes length-prefixed signal Frames to stdout |
+| `nexus-render` | reads length-prefixed Frames from stdin, writes rendered text to stdout |
+| `criome-handle-frame` | reads a Frame, dispatches via `Daemon::handle_frame` against `$SEMA_PATH`, writes reply Frame |
+
+**Why these are not test-only:** they expose useful
+affordances of the library code (parser, renderer, handler)
+as standalone tools — same shape as `gcc -E` (preprocess
+only) shipping alongside `gcc`. Agents and scripts that
+manipulate Frames or sema state directly, without a UDS
+roundtrip, use them. They live as additional `[[bin]]`
+entries in the existing crate, not in a separate test-tools
+crate.
+
+**When to add a new one:** when a verb of the library code
+is genuinely useful as a filter primitive. Don't create
+trivial passthrough binaries.
+
 ## Design-doc hygiene — state criteria positively
 
 Avoid polluting design context with "do not use X" patterns. When a candidate is excluded — by constraint, preference, or past decision — **omit it silently** from forward-going context. Don't leave "X is bad because Y," "we ruled out X," or "not X" breadcrumbs across files.
