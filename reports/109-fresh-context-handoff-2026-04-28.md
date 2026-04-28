@@ -1,0 +1,194 @@
+# 109 — Fresh-context handoff snapshot 2026-04-28 (post-rename + design)
+
+*Ephemeral. Replaces the deleted `reports/107`. Delete when consumed —
+the workspace's target state is `reports/` containing only the active
+design report (currently 108).*
+
+## 0 · TL;DR
+
+- **M0 demo working end-to-end.** `(Node "User")` → `(Ok)` and
+  `(| Node @name |)` → `[(Node "User")]` shuttle through
+  `criome-daemon` + `nexus-daemon` via `nexus-cli`, verified by
+  `mentci-integration` in `nix flake check`. All 14 derivations
+  pass.
+- **Active design captured in [`reports/108`](108-flow-graph-three-projections-2026-04-28.md)** —
+  flow-graph-as-shared-substrate with three projections (nexus
+  text shipping, prism code-emission for runtime creation, mentci
+  UI for live render+edit). 11 open questions in §8 gate concrete
+  next-step code work.
+- **prism (renamed from rsc, 2026-04-28)** is the code-emission
+  subcomponent of `lojix-daemon`'s 5-phase runtime-creation pipeline
+  (directory assembly → prism emits .rs → dependency resolution →
+  compile → artifact landing in lojix-store). Stub today; body
+  lands once criome's record supply is wide enough + lojix-daemon
+  arrives.
+- **Path A on KindDecl** (2026-04-28): `KindDecl` + `FieldDecl` +
+  `Cardinality` + `KindDeclQuery` dropped from signal entirely.
+  The closed Rust enum in signal is the **authoritative type
+  system today**. Schema-as-data scaffolding will be re-added when
+  `prism` or mentci has a real reader.
+
+## 1 · Required reading order
+
+A fresh agent reads, in this order:
+
+1. [`mentci/AGENTS.md`](../AGENTS.md) — workspace conventions
+   (jj+always-push, naming, S-expression commits, restate-to-refute
+   prohibition, report rollover, §Style docs are patterns not
+   snapshots).
+2. [`mentci/docs/workspace-manifest.md`](../docs/workspace-manifest.md) —
+   repo inventory + status (CANON / TRANSITIONAL / SHELVED).
+3. `criome/ARCHITECTURE.md` — the project-wide canonical doc
+   (Invariants A–D, the request flow, the three-daemon shape, the
+   two-stores split, the lojix-daemon-as-runtime-creator framing).
+4. [`tools-documentation/programming/{beauty,abstractions}.md`](https://github.com/LiGoldragon/tools-documentation) —
+   discipline (beauty as the criterion, methods on types,
+   "free functions are incorrectly specified verbs").
+5. [`tools-documentation/rust/{style,ractor,rkyv}.md`](https://github.com/LiGoldragon/tools-documentation/tree/main/rust) —
+   Rust patterns (the No-ZST-method-holders rule, ractor 0.15
+   four-piece-template + mailbox semantics, rkyv portable
+   feature-set).
+6. **[`reports/108`](108-flow-graph-three-projections-2026-04-28.md)** —
+   the active design. Read in full; the 11 §8 questions are the
+   gating decisions for code work.
+7. Per-repo `AGENTS.md` + `ARCHITECTURE.md` when working in a
+   specific repo.
+
+## 2 · Where to look
+
+| Question | File |
+|---|---|
+| Workspace conventions | `mentci/AGENTS.md` |
+| Repo inventory + status | `mentci/docs/workspace-manifest.md` |
+| Project-wide architecture (canonical) | `criome/ARCHITECTURE.md` |
+| Per-repo orientation | `<repo>/AGENTS.md` |
+| Per-repo bird's-eye | `<repo>/ARCHITECTURE.md` |
+| Beauty + methods-on-types + free-fns-are-incorrectly-specified-verbs | `tools-documentation/programming/{beauty,abstractions}.md` |
+| Rust style + No-ZST-method-holders + branch-pin policy | `tools-documentation/rust/style.md` |
+| Ractor 0.15 patterns | `tools-documentation/rust/ractor.md` |
+| Rkyv 0.8 discipline | `tools-documentation/rust/rkyv.md` |
+| Crane + fenix flake layout | `tools-documentation/rust/nix-packaging.md` |
+| Nix integration-test patterns | `tools-documentation/nix/integration-tests.md` |
+| **Active design idea** | `reports/108` |
+
+## 3 · State per repo
+
+- **CANON, M0 working** — `criome`, `nexus`, `nexus-cli`, `signal`,
+  `sema`, `nota`, `nota-codec`, `nota-derive`, `tools-documentation`.
+  All cross-repo Cargo deps use `branch = "main"`. Lockfiles pin
+  by sha. Workspace `nix flake check` from mentci passes all 14
+  derivations including `mentci-integration` end-to-end.
+- **CANON, skeleton (M2+)** — `lojix-store`, `lojix-schema`. Stubs
+  with valid ARCH+AGENTS docs.
+- **TRANSITIONAL** — `lojix`, `lojix-cli`, `prism` (renamed from
+  rsc 2026-04-28; the code-emission subcomponent of lojix-daemon's
+  pipeline; stub).
+- **CANON cluster (CriomOS)** — `CriomOS`, `horizon-rs`,
+  `CriomOS-emacs`, `CriomOS-home`. Ancillary; not part of the
+  M0 daemon graph.
+
+## 4 · Recent decisions worth carrying forward
+
+- **branch=main for sibling Cargo deps.** Lockfiles pin by sha for
+  reproducibility; Cargo.toml stays stable while upstream evolves.
+  Switch a dep to `rev = "..."` only when it stabilises.
+- **`signal::Diagnostic::error(code, message)`** — canonical
+  constructor for daemon-emitted Error-level diagnostics. Replaces
+  the prior free `criome::engine::diagnostic` function.
+- **`Daemon::start` was a ZST-method-holder violation, removed.**
+  Actor markers (`pub struct Daemon;`) carry only `impl Actor for
+  Daemon` (trait impl). The spawn lives inline in `main.rs`.
+- **`CriomedInstance` → `CriomeDaemonInstance`** (daemon-suffix
+  naming convention).
+- **Reports/074 absorbed into `tools-documentation/rust/rkyv.md`**;
+  9 cross-citations across 4 repos repointed at the durable home.
+- **Style docs are patterns, not snapshots** — no embedded
+  specifics from current downstream repos (no exact actor counts,
+  no file-path listings, no concrete function or message-variant
+  names that will rot, no cross-citations to a downstream
+  ARCHITECTURE.md to backstop a claim).
+- **Free functions are incorrectly specified verbs** — when you
+  reach for one, slow down and find the noun. If no obvious noun
+  exists, the model is incomplete; the missing type is what the
+  verb is asking you to declare.
+- **Reports are ephemeral.** Default to deletion. Extract to
+  architecture docs or tools-documentation only when the rationale
+  has no other durable home.
+- **lojix-daemon orchestrates runtime creation** (5 phases). prism
+  emits `.rs` only; lojix-daemon owns directory assembly,
+  dependency resolution, compiler invocation, artifact landing.
+- **Path A on KindDecl** — schema-as-data scaffolding dropped
+  entirely until prism or mentci earns it (see §0 + reports/108
+  §2 + §8 Q12).
+
+## 5 · bd state
+
+8 open issues, 0 in-progress, 0 blocked — all forward-looking work.
+
+| ID | P | Title |
+|---|---|---|
+| `mentci-next-ef3` | P1 | Self-hosting "done" moment — concrete first feature |
+| `mentci-next-d3b` | P2 | M0 step 7 — genesis.nexus + bootstrap glue |
+| `mentci-next-7tv` | P2 | M1 — per-kind sema tables (replace 1-byte kind discriminator) |
+| `mentci-next-8ba` | P2 | M3 — sema redb wrapper (database library) |
+| `mentci-next-4jd` | P2 | M2-remainder: method-body layer in nexus-schema |
+| `mentci-next-0tj` | P2 | Implement prism records-to-Rust projection |
+| `mentci-next-7dj` | P2 | Cross-repo wiring — flake input pattern for local dev |
+| `mentci-next-zv3` | P2 | M6 — bootstrap demo (DB → prism → compile → demonstrate) |
+
+(`mentci-next-dqp` "Rename rsc to a full English word" was closed
+2026-04-28 with the prism rename.)
+
+## 6 · Open work — gating Li's input
+
+The 11 questions in [`reports/108` §8](108-flow-graph-three-projections-2026-04-28.md#8--open-questions)
+are the things waiting for Li's answers before sketching code.
+Most load-bearing:
+
+- **Q1** — first node-kind structs in signal (Source / Transformer
+  / Sink? Or domain-specific to criome's request flow?). Frames
+  signal's new types and prism's first emission templates.
+- **Q3** — prism shape: proc-macro / build.rs / standalone CLI?
+  "Macro programming" framing leans proc-macro; operational
+  simplicity points at standalone.
+- **Q4** — mentci UI tech (egui / iced / gpui / web / ratatui).
+  Big nix-build implications per choice.
+- **Q5** — mentci speaks signal directly over UDS, or shells to
+  nexus-cli? Real-time editing wants direct.
+- **Q9** — confirm "main repository" name = mentci.
+
+(Q12 RESOLVED — Path A taken.)
+
+## 7 · Lurking dangers (context worth keeping)
+
+- **Lojix family carries the ZST-method-holder pattern** that
+  criome + nexus had before the 2026-04-28 audit; deferred per
+  Li's "leave lojix alone for now." When lojix is next worked on,
+  audit `lojix/src/{uds,actors/*.rs}` and
+  `lojix-cli/src/{build,deploy,proposal,project,artifact}.rs` for
+  inherent impls on `pub struct Foo;` and apply the same fix
+  shape (move work into `main` or onto a real noun with fields).
+- **`horizon-rs` flake** uses blueprint with a Cargo crate at
+  `lib/`; blueprint tries to import `lib/default.nix` which
+  doesn't exist, so `nix flake check` from horizon-rs fails.
+  Direct `nix build .#packages.x86_64-linux.default` works.
+  Pre-existing structural issue, unrelated to recent cleanups.
+- **prism is a stub.** `src/main.rs` is `fn main() {}`. Body lands
+  when criome's record supply is wide enough to project AND
+  lojix-daemon arrives to host the runtime-creation pipeline.
+  Don't refactor prism speculatively.
+- **per-kind sema tables** (`bd mentci-next-7tv`) need to land for
+  prism to read structured per-kind storage. The 1-byte kind
+  discriminator in `criome/src/kinds.rs` is the M0 stop-gap.
+- **Subscribe is M2+.** mentci's UI launches before subscribes
+  exist; will poll until then per reports/108 §8 Q6.
+
+## 8 · Lifetime
+
+This file is a snapshot. Delete when consumed.
+[`reports/108`](108-flow-graph-three-projections-2026-04-28.md)
+remains in the active-design sense — until the design is
+concretised into `criome/ARCHITECTURE.md` + per-repo
+`ARCHITECTURE.md` + code in prism + mentci. When all three
+exist, both 108 and 109 are deleted; `reports/` returns to its
+target empty shape.
