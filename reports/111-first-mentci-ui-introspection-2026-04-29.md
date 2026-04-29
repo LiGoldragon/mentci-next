@@ -2,14 +2,13 @@
 
 *Research report. The first incarnation of mentci is an
 introspection workbench that lets a human see into criome's
-running state and edit the database directly through gestures.
+running state and edit the database through gestures.
 Concentrates on **visuals**; code shapes belong in
-skeleton-as-design once enough of the surface is settled. This
-revision (2026-04-29 / v3) absorbs Li's answers to the prior
-draft's deeper questions, applies elegance/correctness/beauty
-reasoning to the ones the agent can answer, and keeps only the
-genuinely-load-bearing questions for Li. The first mentci-ui
-must move; it does not need every detail decided in advance.*
+skeleton-as-design once enough is settled. Revision v4
+(2026-04-29) absorbs Li's answers on Subscribe payloads, the
+schema-in-sema direction, identity/Tweaks, engine-wide wire-tap,
+and theme records' egui-shape; deep-dives the one remaining
+load-bearing question — mentci-lib's contract shape.*
 
 ---
 
@@ -19,57 +18,62 @@ The first mentci-ui exists for one reason: **let the human
 shaping the engine see it clearly enough to participate in its
 design**. Per [INTENTION](../INTENTION.md), introspection is
 first-class — the surface is a peer of the engine, not a
-downstream consumer.
-
-Two intertwined goals: introspection and direct interaction.
-Introspection without interaction is read-only; interaction
-without introspection is an admin tool. The first mentci-ui
-must do both at once.
+downstream consumer. The first mentci-ui must do introspection
+and direct interaction at once.
 
 ---
 
 ## 1 · What is settled
 
-The shape below is no longer open at these points:
+After three rounds of Li's answers, the following are no
+longer open:
 
-- **Subscribe is foundational.** The first mentci-ui assumes
-  Subscribe ships as part of getting the surface working; the
-  canvas is live to pushed updates from the start. No poll.
-- **mentci is a family.** One repo per GUI library
-  (`mentci-egui`, `mentci-iced`, `mentci-flutter`, …); each
-  consumes one shared `mentci-lib`. Non-Rust GUIs additionally
-  consume a foreign-interface bridge.
-- **mentci-lib is heavy; GUI shells are thin.** All
-  sema-viewing and editing logic lives in mentci-lib —
-  category selection, graph selection, selected views,
-  comparison, action-flows, submissions, responses, themes,
-  layout. Each GUI is a thin rendering shell that responds to
-  mentci-lib's interfaces in its own library's idiom. The
-  family converges on the same workbench logic; each member
-  feels native because of how its shell renders.
-- **Two surfaces, two audiences.** Agents (LLMs, scripts,
-  automations) use nexus text against criome via the
-  nexus-daemon. Humans use gestures via mentci. The GUI is
-  human-only.
-- **Daemons compose.** mentci connects to *both* daemons:
-  criome (over signal, for editing / queries / subscriptions)
-  and nexus-daemon (over signal, used purely as a signal↔nexus
-  rendering service). Per the bright-line scope in
-  nexus/ARCHITECTURE.md, nexus-daemon does only translation,
-  in both directions, nothing else.
-- **Connection shapes:** persistent for both daemons;
-  nexus-down → error pane; criome-down → mentci is useless and
-  refuses to operate.
-- **Surfaces are dynamic.** Panes appear when there's something
-  to show (Diagnostics) and disappear when not. Some panes are
-  user-toggled (Wire) even when content exists.
-- **No raw nexus typing.** Humans never author wire payloads by
-  hand. Editing happens through schema-aware constructor
-  flows. Nexus is a *display* format for reading typed
-  payloads, not a typing surface.
-- **First library: egui.** Linux + Mac first-class, Rust-native
-  (no foreign bridge), strong fit for the canvas's specific
-  needs; reasoning in §11. The first repo is `mentci-egui`.
+- **Subscribe is foundational.** Engine work for it is part of
+  this milestone. Canvas is live to pushed updates from start.
+- **Subscribe payload: the full updated record.** Signal is
+  small, typed, binary; full-record on push is correct.
+  Diff-reconstruction is fragile; refetch-on-push is
+  poll-shaped and rejected.
+- **mentci is a family.** One `mentci-lib` + one repo per GUI
+  library (`mentci-egui`, `mentci-iced`, `mentci-flutter`, …).
+  Foreign-interface barriers handled by per-language shim
+  crates when needed.
+- **mentci-lib is heavy; shells are thin.** All sema-viewing
+  and editing logic lives in mentci-lib — view-state machines,
+  action-flow state machines, connection management, schema
+  knowledge, theme + layout interpretation. Each GUI is a
+  rendering shell.
+- **Two surfaces, two audiences.** Agents → nexus. Humans →
+  mentci. The GUI is human-only.
+- **Daemons compose.** Two persistent connections from mentci:
+  to criome (signal — editing, queries, subscriptions) and to
+  nexus-daemon (signal — used as a signal↔nexus rendering
+  service, per nexus/ARCH's bright-line scope).
+- **Failure modes.** nexus down → error pane appears, "[as
+  nexus]" lines hide, raw typed payloads remain visible.
+  criome down → mentci is useless and refuses to operate.
+- **Surfaces are dynamic.** Diagnostics pane appears when
+  ≥1 unread; wire pane is user-toggled.
+- **No raw nexus typing.** Humans gesture; nexus is display-
+  only via the rendering service.
+- **First library: egui.** Linux + Mac first-class, Rust-native,
+  strong fit for the workbench. The first repo is
+  `mentci-egui`.
+- **Schema-in-sema is the medium-term direction.** Signal's
+  type definitions are intended to live as records in sema
+  (records describing record kinds — "datatypes-datatypes"),
+  fitting the graph system; first target for forge's Rust
+  generation. For the first mentci-ui, schema knowledge in
+  mentci-lib is compile-time-codegen; design accommodates the
+  swap. See §13.
+- **Engine-wide wire-tap is wanted.** Documented for later
+  design. Not blocker for the first mentci-ui. See §16.
+- **Identity + Tweaks land in the engine.** A `Principal`
+  record kind plus a "mentci config/tweaks" index for
+  per-Principal styles. Specific shape in §14.
+- **Theme/layout record kinds shape with egui.** The first
+  set is informed by egui's rendering features; semantic-
+  intent rather than appearance values. See §15.
 
 ---
 
@@ -77,90 +81,64 @@ The shape below is no longer open at these points:
 
 Categories of engine state the surface reveals:
 
-- **Records.** Every record, by kind, with slot, current hash,
-  display name, current revision.
-- **The graph.** Flow-graph rendering when the selection is a
-  Graph — Graph node, member Nodes, Edges with `RelationKind`
-  visually encoded.
-- **History.** The change log per slot.
-- **Diagnostics.** Validation rejections as first-class events.
-- **The wire.** Every signal frame, both directions, at
-  typed-variant level.
-- **Subscriptions.** What's subscribed, what's pushing.
-- **Connection state.** For *both* daemons.
-- **Cascades.** When a write triggers further changes,
-  visible — not collapsed.
-- **The surface itself.** Theme, layout, pane visibility — as
-  records, edited the same way as everything else.
+- Records (every record, by kind, with slot, hash, name, rev).
+- The graph (Graph + member Nodes + Edges with `RelationKind`
+  visually encoded).
+- History (per-slot change log).
+- Diagnostics (validation rejections as first-class events).
+- The wire (every signal frame, both directions, typed).
+- Subscriptions (what's subscribed, what's pushing).
+- Connection state (both daemons).
+- Cascades (when a write triggers further changes).
+- The surface itself (theme, layout, pane visibility — as
+  records, edited the same way as everything else).
 
 ---
 
-## 3 · The mentci-lib / GUI shell pattern
-
-The library defines interfaces; the shell implements them.
+## 3 · The mentci-lib / shell pattern
 
 ```
-                ┌──────────────────────────────────┐
-                │           mentci-lib             │
-                │                                  │
-                │  CONTAINS ALL APPLICATION LOGIC: │
-                │  • view-state machines           │
-                │      (canvas, inspector,         │
-                │       diagnostics, wire,         │
-                │       graph nav, …)              │
-                │  • action-flow state machines    │
-                │      (drag-wire, drag-new-box,   │
-                │       rename, retract, batch)    │
-                │  • engine connection management  │
-                │      (criome + nexus-daemon)     │
-                │  • subscription + reply demux    │
-                │  • schema knowledge              │
-                │      (constructor flow options)  │
-                │  • theme + layout interpretation │
-                │      (records → semantic intent) │
-                │                                  │
-                │  EXPOSES (per pane / per flow):  │
-                │  • current-view data             │
-                │  • input-event sink              │
-                │                                  │
-                └────────────────┬─────────────────┘
-                                 │
-                                 │ thin contract
-                                 │ (data out, events in)
-                                 │
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                  ▼
-       ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-       │ mentci-egui │    │ mentci-iced │    │mentci-flutter│
-       │             │    │             │    │  + foreign  │
-       │ paint widg. │    │ Elm-arch    │    │  interface  │
-       │ in egui     │    │ in iced     │    │  bridge     │
-       │             │    │             │    │             │
-       │ THIN shell  │    │ THIN shell  │    │ THIN shell  │
-       └─────────────┘    └─────────────┘    └─────────────┘
+              ┌──────────────────────────────────┐
+              │           mentci-lib             │
+              │                                  │
+              │  ALL APPLICATION LOGIC:          │
+              │   • view-state machines          │
+              │   • action-flow state machines   │
+              │   • engine connection management │
+              │   • subscription + reply demux   │
+              │   • schema knowledge             │
+              │   • theme + layout interpretation│
+              │                                  │
+              │  EXPOSES (shape: see §12):       │
+              │   • current-view data            │
+              │   • input-event sink             │
+              └────────────────┬─────────────────┘
+                               │
+                               │ thin contract
+                               │ (data out, events in)
+                               │
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+     ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+     │ mentci-egui │    │ mentci-iced │    │mentci-flutter│
+     │             │    │             │    │  + foreign  │
+     │ paints      │    │ Elm-arch    │    │  interface  │
+     │ widgets in  │    │ in iced     │    │  shim crate │
+     │ egui        │    │             │    │             │
+     │ THIN shell  │    │ THIN shell  │    │ THIN shell  │
+     └─────────────┘    └─────────────┘    └─────────────┘
 ```
-
-Each shell is "really thin": it renders the data mentci-lib
-provides in the shell's native idiom and forwards user events
-back. The family converges on identical workbench *logic*; each
-member feels different because of *how* its native rendering
-interprets the same logical shape.
 
 The contract — what the data + events look like at the
-boundary — is the load-bearing design question for mentci-lib.
-Settled in §13.
+boundary — is the load-bearing decision deep-dived in §12.
 
 ---
 
 ## 4 · The workbench
 
-Always-visible: Graphs nav, Canvas, Inspector. State-driven:
-Diagnostics (when ≥1 unread). User-toggled: Wire. Header shows
-both daemon connections explicitly.
-
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ [● criome v0.1.0]  [● nexus v0.1.0]      [⊞ wire] [⌗ themes]   │
+│ [● criome v0.1.0]  [● nexus v0.1.0]      [⊞ wire] [⌗ tweaks]   │
 ├──────────┬─────────────────────────────────────┬───────────────┤
 │          │                                     │               │
 │  GRAPHS  │             CANVAS                  │  INSPECTOR    │
@@ -170,94 +148,66 @@ both daemon connections explicitly.
 │ ▸ Build  │             ╲              Flow     │   kind: Node  │
 │   Defs   │              Flow            │      │   name: Echo  │
 │ ▸ Authz  │                ╲             ▼      │   rev:  7     │
-│ ▸ Theme  │                 ▼          ⊠ Sink   │   hash: 8a3f… │
-│   Layout │              ⊠ Sink                 │               │
-│   ...    │                                     │  HISTORY      │
-│          │                                     │  ▼ rev 7  now │
+│ ▸ Tweaks │                 ▼          ⊠ Sink   │   hash: 8a3f… │
+│   …      │              ⊠ Sink                 │               │
+│          │                                     │  HISTORY      │
+│ + new G  │                                     │  ▼ rev 7  now │
 │          │                                     │  ▼ rev 6  -3m │
-│          │                                     │  ▼ rev 5  -8m │
-│ + new G  │                                     │               │
-│          │                                                     │
-│          │     [pane appears below only when needed]           │
 ├──────────┴─────────────────────────────────────┴───────────────┤
 │ ⚠ DIAGNOSTICS (2)                                       [clear]│
 │ ✗ rev8 STALE_REV slot 1042 · ↳ jump                            │
 │ ⚠ rev7 batch partial 2/3 · ↳ inspect                           │
-│                                                                │
-│ (this strip not shown when diagnostics list is empty)          │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-When `[⊞ wire]` toggles on, a wire strip slides in between
-canvas and diagnostics — same dynamics. `[⌗ themes]` opens the
-theme/layout editing surface (same constructor-flow pattern as
-any record edit).
+Always-visible: Graphs, Canvas, Inspector. Diagnostics: when
+non-empty. Wire: user toggle. Tweaks button opens the
+per-Principal Tweaks editor (themes, layout, keybinds — same
+constructor-flow pattern as any record edit).
 
 ---
 
 ## 5 · The flow-graph canvas
 
-The centrepiece. When the selection is a Graph, the canvas
-renders it with kinds, edges, and state visually encoded.
-
 ```
                     ╭───────────────╮
-                    │               │
                     │   ⊙  Source   │
                     │    "ticks"    │
-                    │               │
                     ╰───────┬───────╯
-                            │
-                          Flow
-                            │
+                            │ Flow
                             ▼
                     ╭───────────────╮
-                    │               │
                     │   ⊡ Transf.   │
                     │    "double"   │
-                    │               │
                     ╰─┬───────┬─────╯
-                      │       │
-                    Flow    Flow
-                      │       │
+                      │ Flow  │ Flow
                       ▼       ▼
               ╭──────────╮ ╭──────────╮
-              │          │ │          │
               │ ⊠ Sink   │ │ ⊠ Sink   │
               │ "stdout" │ │ "log"    │
-              │          │ │          │
               ╰──────────╯ ╰──────────╯
 ```
 
-Visual encoding (interim — final palette deferred):
-
 - **Glyph encodes kind.** ⊙ Source · ⊡ Transformer · ⊠ Sink ·
   ⊕ Junction · ▶ Supervisor.
-- **Stroke style encodes RelationKind.** Closed-enum variants
-  get consistent stroke styles; the encoding is part of
+- **Stroke style encodes RelationKind.** Each closed-enum
+  variant gets a consistent stroke style; encoding lives in
   mentci-lib's theme interpretation.
-- **Colour reserved for state.** Pending optimistic edit, stale
-  (subscription push pending), rejected (failed write). Kind
-  is glyph; state is colour.
-- **Labels.** Display name first; slot id on hover; hash never
-  on canvas (lives in inspector).
+- **Colour reserved for state.** Pending optimistic edit,
+  stale (subscription push pending), rejected (failed write).
+- **Labels.** Display name on the node; slot id on hover;
+  hash never on canvas.
 
-The canvas is **always live**. Subscription pushes from criome
-update mentci-lib's model; the GUI shell re-renders. Nodes
-visibly transition through state colours.
+The canvas is **always live** to subscription pushes from
+criome.
 
 **Node positions are records.** Layout is sema state — readable,
-editable, shareable across mentci sessions. Moving a node is a
-Mutate to its `position` field on a `NodePlacement` (or
-similar) record. Two mentci sessions on the same criome see
-the same layout. This follows from "the surface itself is
-records" — layout is part of the surface.
+editable, shareable across mentci sessions on the same criome.
+Moving a node generates a Mutate to its position record.
 
 ---
 
 ## 6 · The inspector
-
-Selected slot's complete state. Two stacked sections:
 
 ```
 SLOT 1042                                              [▢ pin]
@@ -287,12 +237,9 @@ HISTORY (full log; scroll for older)
 ═══════════════════════════════════════════════════════════════
 ```
 
-The "as nexus" line is rendered by sending the typed payload to
-nexus-daemon and showing what comes back. mentci does not embed
-nexus's parser/renderer; it consults the daemon.
-
-Every history entry's arrow scrubs the canvas backward to that
-point in time. History is first-class.
+The "[as nexus]" line: typed payload sent to nexus-daemon;
+nexus text comes back; mentci displays. mentci does not embed
+nexus's parser/renderer.
 
 ---
 
@@ -318,10 +265,8 @@ DIAGNOSTICS                                          [clear all]
    ↳ slot 1042
 ```
 
-Pane appears when list is non-empty; vanishes on clear. Failed
-writes also overlay on the canvas at the affected node (red
-border, cleared on next successful write to the slot) — at-site
-shows *where*; pane shows *when* and *what suggestion*.
+Pane appears when list non-empty; vanishes on clear. Failed
+writes also overlay on the canvas at the affected node.
 
 ---
 
@@ -338,7 +283,6 @@ WIRE                                          [pause] [filter…]
 
 ← 17:23:08.418  req#41  from criome
                 Outcome(Ok)
-                [as nexus]   (Ok)
 
 → 17:23:09.001  req#42  to criome
                 Query(QueryOp::Node(NodeQuery{…}))
@@ -353,30 +297,22 @@ WIRE                                          [pause] [filter…]
    →  request out      ←  reply in      ⇣  subscription push
 ```
 
-User-toggled. The "as nexus" expansion uses nexus-daemon for
-rendering — the same primitive the agent's nexus-cli uses. The
+User-toggled. "[as nexus]" lines render via nexus-daemon. The
 introspection surface re-uses the agent surface's text codec.
 
-For now, the wire pane shows frames from *this connection only*.
-Engine-wide observability ("see what every other agent is doing
-through criome") is a deeper future capability that requires
-criome to expose a wire-tap subscription; surfaced as a question
-in §13.
+For the first mentci-ui: this-connection-only. Engine-wide
+wire-tap is documented for later design; see §16.
 
 ---
 
 ## 9 · Schema-aware constructor flows
 
-Every gesture opens a context-specific flow that knows the
-schema for the verb being constructed and surfaces only valid
-options.
-
 ```
 DRAG-WIRE FLOW (drag from box A to box B)
 ═══════════════════════════════════════════════════════════════
 
-  ⊙ Source ╌╌╌╌╌╌╌╌╌╌╌▶ ⊡ Transf.            (pending preview)
-                                              wire shown dashed
+  ⊙ Source ╌╌╌╌╌╌╌╌╌╌╌▶ ⊡ Transf.            (pending preview,
+                                              wire shown dashed)
 
   ┌──────────────────────────────────────────┐
   │  NEW EDGE                                │
@@ -388,47 +324,29 @@ DRAG-WIRE FLOW (drag from box A to box B)
   │               │   DependsOn             ││
   │               │   Contains              ││
   │               │   References            ││
-  │               │   Produces              ││
-  │               │   Consumes              ││
-  │               │   Calls                 ││
-  │               │   Implements            ││
-  │               │   IsA                   ││
+  │               │   …                     ││
   │               └─────────────────────────┘│
   │  description: [_________________________]│
   │                                          │
   │              [cancel]  [commit]          │
   └──────────────────────────────────────────┘
-
-   ↑                                       ↑
-   schema knowledge from mentci-lib        commit sends
-                                           Assert(Edge {…})
 ```
 
-Constructor-flow principles:
-
-- **Pre-show but uncommitted.** The wire appears visually as
-  soon as the drag completes (dashed, pending colour). Nothing
-  leaves the wire until the user clicks commit. The pending
-  preview is *intent*, not state.
-- **Schema knowledge in mentci-lib.** When mentci-lib knows
-  Edge has a `kind: RelationKind` field, the flow surfaces the
-  variants. Adding a variant in `signal/flow.rs` reaches every
-  family member through mentci-lib.
+- **Pre-show but uncommitted.** The wire appears dashed; no
+  signal frame leaves until commit.
+- **Schema knowledge in mentci-lib.** mentci-lib knows Edge has
+  a `kind: RelationKind` field; surfaces variants. New variants
+  in `signal/flow.rs` reach every family member through
+  mentci-lib.
 - **Validity narrows the choices.** When some
   source-kind/target-kind/RelationKind combinations are
-  meaningless, the flow shows only the valid ones. The
-  invariants live with the types in signal — adding them is a
-  signal evolution, not a per-GUI concern.
-- **Commit-at-flow-end.** No optimistic UI. The canvas reflects
-  criome's accept; rejection vanishes the pending wire and
+  meaningless, only valid options surface. Invariants live with
+  the types in signal.
+- **Commit-at-flow-end.** No optimistic UI. Canvas reflects
+  criome's accept; rejection vanishes the pending preview and
   surfaces a diagnostic.
 - **Equivalence with the agent path.** Whatever an agent could
-  send via nexus, a human can build via gestures; the two
-  paths converge at the same signal verb.
-
-Each verb gets its own flow shape (drag-new-box, rename,
-mutate-field, batch-edit) — all defined in mentci-lib, rendered
-per-shell.
+  send via nexus, a human can build via gestures.
 
 ---
 
@@ -449,326 +367,565 @@ per-shell.
                               │        │
                 signal        │        │  signal
               (edits,         │        │  (signal↔nexus
-               queries,       │        │   translation only —
-               subscribe)     │        │   nexus-daemon's only
-                              │        │   responsibility)
+               queries,       │        │   translation only)
+               subscribe)     │        │
                               ▼        ▼
                        ┌──────────┐ ┌──────────────┐
                        │  criome  │ │ nexus-daemon │
                        └──────────┘ └──────────────┘
-
-  Both connections are persistent (one per mentci session).
-  The header status bar shows both states explicitly.
-
-  Failure modes:
-   • nexus down, criome up   → error pane appears explaining
-                               why; "[as nexus]" lines hide;
-                               raw typed-payload labels remain
-                               functional (degraded but
-                               operable).
-   • criome down             → mentci is useless without it.
-                               The surface refuses to operate
-                               (no editing, no queries, no
-                               canvas updates). Reconnect
-                               required before further work.
-   • both down               → same as criome down.
 ```
 
-mentci-lib owns both connections. The GUI shell sees a unified
-"engine" surface; the dual-daemon split is hidden from widget
-code (and revealed in the header for the introspecting human).
-
-This composition means **nexus-daemon is consulted as a
-rendering service**, not embedded as code. The same daemon the
-agent's nexus-cli connects to is the daemon mentci's display
-layer consults. One translation primitive, two consumers.
+Both connections persistent (one per session). Header shows
+both states. Failure modes per §1.
 
 ---
 
-## 11 · GUI library — first incarnation is mentci-egui
+## 11 · GUI library — egui
 
-Linux + Mac first-class. Survey:
-
-| Library | Lang | Linux | Mac | Custom canvas | Live updates fit | Graph-editor maturity |
-|---|---|---|---|---|---|---|
-| **egui** | Rust | ● | ● | ● strong | ● immediate-mode | ● strong (`egui_node_graph`, Rerun) |
-| iced | Rust | ● | ● | ◐ | ◐ Elm-arch | ◐ |
-| gpui | Rust | ◐ | ● | ● | ● | ◐ |
-| slint | Rust | ● | ● | ◐ | ● | ✗ |
-| dioxus desktop | Rust | ● | ● | ◐ | ● | ✗ |
-| Flutter | Dart | ● | ● | ● | ● | ◐ + foreign-interface tax |
-| Qt + cxx-qt | C++/Rust | ● | ● | ● | ● | ● heavy |
-| Tauri | Web/Rust | ● | ● | ● | ● | ◐ JS-side complexity |
-
-**Recommendation: egui.** Cited principles:
-
-- **Clarity** — egui's immediate-mode shape (re-render from
-  current state) reads cleanly in code that has to redraw on
-  every subscription push. The model matches the surface's
-  logical shape.
-- **Introspection** — egui's debug overlays and inspection
-  mode are themselves introspectable from the running app —
-  the surface is inspectable at the GUI-toolkit level too.
-- **Strong fit for the canvas's specific needs.**
-  `egui_node_graph` exists; Rerun is the closest existing
-  introspection-workbench precedent and is built on egui.
-- **No foreign-interface bridge needed.** mentci-lib consumed
-  directly.
-- **Both platforms first-class without ceremony.**
-
-What egui gives up: native-widget feel and a declarative
-model. Both are recoverable in later mentci-* family members
-(`mentci-iced` for Elm-arch, `mentci-flutter` for native
-polish).
+Settled per the prior round. Linux + Mac first-class, Rust-
+native, strong fit for the workbench's specific needs (custom
+canvas, dynamic panes, immediate-mode = re-render-from-current-
+state matching subscription-push semantics, `egui_node_graph` /
+Rerun precedent for the canvas).
 
 The first repo is **`mentci-egui`**. Other family members
-follow naturally as mentci-lib's contract is exercised.
+(`mentci-iced`, `mentci-flutter`, …) follow.
 
 ---
 
-## 12 · What this asks of the engine
+## 12 · DEEP DIVE — mentci-lib's contract shape
 
-Introspection and the dual-daemon composition shape the engine.
+This is the load-bearing decision. mentci-lib defines the
+interfaces; the shell implements them. *What kind of interface?*
+Three candidates — visualised, analysed, recommended.
 
-- **Subscribe ships as part of this milestone.** The canvas's
-  always-live property assumes Subscribe; without it, the
-  surface cannot uphold push-not-pull. The engine work for
-  Subscribe is in scope here.
-- **State must be representable, not just queryable.** Every
-  record kind needs a canonical visual rendering.
-- **Diagnostics carry structured suggestions.** The pane
-  displays `suggestion` directly; criome populates it with
-  actionable structured data, not strings.
+### 12.1 Approach A — Trait-based view contracts
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  mentci-lib                                                  │
+│                                                              │
+│  pub struct Workbench { state: WorkbenchState }              │
+│                                                              │
+│  pub trait CanvasView {                                      │
+│      fn canvas(&self) -> &CanvasState;                       │
+│      fn on_canvas_event(&mut self, ev: CanvasEvent);         │
+│  }                                                           │
+│  pub trait InspectorView { ... }                             │
+│  pub trait DiagnosticsList { ... }                           │
+│  pub trait WireStream { ... }                                │
+│                                                              │
+│  impl CanvasView    for Workbench { ... }                    │
+│  impl InspectorView for Workbench { ... }                    │
+│  ...                                                         │
+└────────────────────────────┬─────────────────────────────────┘
+                             │
+                             │ each shell holds &mut Workbench
+                             │ and calls trait methods per pane
+                             ▼
+                       ┌──────────┐
+                       │  shell   │
+                       │ for each │
+                       │ pane:    │
+                       │  read    │
+                       │  state,  │
+                       │  paint,  │
+                       │  emit    │
+                       │  events  │
+                       └──────────┘
+```
+
+**Clarity.** Each pane is its own typed contract. Adding a
+pane means adding a trait. Reads object-oriented in the Rust
+sense. But: the contract is Rust-trait-shaped, which is
+Rust-language-specific.
+
+**Correctness.** Type system enforces every shell impls every
+trait. If mentci-lib adds a pane, every shell breaks the build
+until updated. Loud refactoring.
+
+**Beauty.** The `&mut Workbench` exposed to the shell makes
+state ownership ambiguous — the shell can in principle reach
+through traits and tangle with internals it shouldn't. Cleaner
+than free-function APIs; less clean than pure-data flow.
+
+**Foreign interfaces.** Awkward. Dart, Swift, JS don't have
+Rust traits. A shim crate per language would expose C-FFI
+functions wrapping each trait method by hand. Verbose; couples
+the FFI surface to Rust trait shapes.
+
+**Subscriptions.** Need a re-render-please callback or polling
+on every frame. Either way the trait is augmented with a
+notification channel — and at that point the shape converges
+toward the actor approach.
+
+### 12.2 Approach B — Data-and-events (MVU)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  mentci-lib                                                  │
+│                                                              │
+│  pub struct WorkbenchState { ... }                           │
+│                                                              │
+│  pub struct WorkbenchView {                                  │
+│      canvas:      CanvasView,                                │
+│      inspector:   InspectorView,                             │
+│      diagnostics: Option<DiagnosticsList>,                   │
+│      wire:        Option<WireFrames>,                        │
+│      ...                                                     │
+│  }                                                           │
+│  pub enum UserEvent { ... }                                  │
+│  pub enum EngineEvent { ... }   ← from criome subscriptions  │
+│                                                              │
+│  impl WorkbenchState {                                       │
+│      pub fn view(&self) -> WorkbenchView;                    │
+│      pub fn on_user_event(&mut self, ev: UserEvent)          │
+│            -> Vec<Cmd>;                                      │
+│      pub fn on_engine_event(&mut self, ev: EngineEvent)      │
+│            -> Vec<Cmd>;                                      │
+│  }                                                           │
+│                                                              │
+│  Cmd: SendSignal(Frame), RenderViaNexus(Payload), …          │
+└────────────────────────────┬─────────────────────────────────┘
+                             │
+                  view: WorkbenchView   ◀── data OUT
+                             │
+                             ▼
+                       ┌──────────┐
+                       │  shell   │
+                       │ paints   │
+                       │ from the │
+                       │ snapshot │
+                       └────┬─────┘
+                            │
+                  user event: UserEvent  ──▶ data IN
+                            │
+                            ▼
+                   on_user_event(state, ev) → state'
+```
+
+The library is two pure functions plus a state struct:
+- `view: state → WorkbenchView` (data the shell paints)
+- `update: state, event → state` (how state evolves)
+
+The shell is a function `WorkbenchView → pixels` plus a
+gesture handler emitting `UserEvent`s. Subscription pushes from
+criome enter as `EngineEvent`s and flow through the same
+`update` path.
+
+**Clarity.** Pure data flowing out, pure data flowing in. No
+shared mutable references. The shell knows nothing about
+mentci-lib's internals; mentci-lib knows nothing about the
+shell's rendering. The contract is a struct + an enum; that's
+the entire surface.
+
+**Correctness.** Every change is a typed event; every view is
+a typed snapshot. Time-travel debugging is trivial — record the
+event log and replay. Refactoring is loud (compiler errors at
+every break).
+
+**Beauty.** This is the cleanest abstract shape. State owned
+by mentci-lib. Views are projections. Events are intent. Maps
+exactly to immediate-mode (re-render the view every frame) and
+to retained-mode (diff against prior view). The same shape Elm,
+Redux, Bevy ECS, and React all settle on for the same reason —
+it composes.
+
+**Foreign interfaces.** Excellent. `WorkbenchView` and
+`UserEvent` serialise (rkyv would be the natural choice in this
+workspace; matches the wire). The C-FFI shim is two functions:
+`get_view() -> bytes` and `send_event(bytes)`. Flutter via FFI,
+WASM in a browser, Swift on iOS — all the same shape. The
+foreign interface IS the contract.
+
+**Subscriptions.** Push from criome → mentci-lib emits an
+internal `EngineEvent` → state updates → view changes → shell
+re-renders. Linear. Traceable.
+
+**Concerns.** Allocates a snapshot per change. Mitigation:
+rkyv zero-copy; or per-pane sub-views with stable IDs and only
+the changed sub-views rebuild. This is a known pattern (the
+React `key` discipline; Elm's lazy nodes); the engine's existing
+rkyv discipline already handles zero-copy serialisation
+identically.
+
+### 12.3 Approach C — Async-channel actors
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  mentci-lib                                                  │
+│                                                              │
+│  Actor: WorkbenchSupervisor                                  │
+│      ├── Actor: CanvasModel                                  │
+│      │      Message: { ev: CanvasEvent }                     │
+│      │      publishes: CanvasView                            │
+│      ├── Actor: InspectorModel                               │
+│      ├── Actor: DiagnosticsModel                             │
+│      └── Actor: WireModel                                    │
+│                                                              │
+│  Public API:                                                 │
+│      fn subscribe_canvas() -> Receiver<CanvasView>           │
+│      fn send_canvas_event(ev: CanvasEvent)                   │
+│      fn subscribe_inspector() -> Receiver<InspectorView>     │
+│      ...                                                     │
+└──────────────────┬───────────────────────────────────────────┘
+                   │
+                   │ shell holds N receivers + N senders
+                   ▼
+              ┌─────────┐    ┌─────────┐
+              │ Receiver│    │ Sender  │
+              │ <View>  │    │ <Event> │
+              └────┬────┘    └────▲────┘
+                   ▼              │
+                 ┌─────────────────┐
+                 │   GUI shell     │
+                 │  poll receivers │
+                 │  paint changes  │
+                 │  send events    │
+                 └─────────────────┘
+```
+
+**Clarity.** Each pane is an actor. The shell talks per pane.
+Maps to ractor (the engine's pattern).
+
+**Correctness.** Actor isolation prevents shared-state bugs.
+Cross-pane coordination (canvas selection updates inspector)
+requires explicit messaging via the supervisor or pub/sub —
+adds machinery the simpler shapes don't need.
+
+**Beauty.** Workbench-as-supervision-tree is faithful to
+ractor's idiom in the engine. But: the GUI shell *is*
+synchronous (egui's frame loop, iced's update, Flutter's UI
+thread). Putting actors between the shell and the model adds
+async/concurrency machinery the shell doesn't actually need.
+Subscribe in criome already pushes — pushing a second
+async-channel layer between criome and the shell is
+async-on-async without a reason.
+
+**Foreign interfaces.** Hard. Rust mpsc / ractor channels
+don't FFI cleanly. A shim could expose a polling API or a
+callback-registration API on top of channels — but at that
+point it's MVU underneath, with extra boxes.
+
+**Subscriptions.** Natural fit if you accept the actor
+framework. But the natural fit is into MVU's `EngineEvent` flow
+without the actor layer.
+
+### 12.4 Comparison
+
+| Property | A: Trait | B: MVU | C: Actor |
+|---|:---:|:---:|:---:|
+| Code clarity | ◐ | ● | ◐ |
+| State ownership | ambiguous | clear | clear-per-actor |
+| Subscribe fit | clunky | natural | natural |
+| Foreign interface portability | per-trait FFI shim | serialise view + event | poor |
+| Time-travel debugging | hard | trivial (event log) | hard |
+| Adding a pane | new trait + shell impls | new struct field + variant | new actor + spawn |
+| Concurrency surface | low | low | high |
+| Match with engine's actor pattern | low | medium | high |
+| Match with egui's idiom | medium | high | low |
+| Match with iced's idiom (Elm-arch) | low | identical | low |
+| Match with Flutter (declarative) | low | high | low |
+| Cleanest pure shape | no | yes | no |
+
+### 12.5 Recommendation
+
+**B (MVU)**, by clarity + correctness + beauty + foreign-
+interface portability all simultaneously:
+
+- **Clarity.** Pure data + pure events is the smallest possible
+  contract surface.
+- **Correctness.** Snapshots are diffable; events are
+  recordable; time-travel debugging arrives free.
+- **Beauty.** mentci-lib's whole role — "all sema-viewing and
+  editing logic" per Li's framing — has a natural shape as a
+  state machine that produces views and consumes events.
+- **Foreign-interface portability.** The contract is a
+  serialisable data structure plus an event enum. Every GUI
+  library — egui, iced, Flutter, future ones — consumes the
+  same two things in their native idiom. The shim crate per
+  foreign language is shallow because the contract is shallow.
+- **Match with subscription semantics.** Criome's Subscribe
+  pushes a record; mentci-lib lifts it to an `EngineEvent`;
+  state updates; new view emerges; shell re-renders. Linear.
+- **Match with the workspace's existing rkyv discipline.**
+  WorkbenchView and UserEvent are rkyv-serialisable like every
+  other typed payload in the system.
+
+The actor approach (C) double-encapsulates state — once in
+ractor's actor framework, again in the model — and doesn't
+buy concurrency the UI needs. The trait approach (A) couples
+the contract to Rust's trait semantics, which the foreign-
+interface goal explicitly asks us to abstract over.
+
+If Li confirms B, mentci-lib's skeleton-as-design follows
+this shape.
+
+---
+
+## 13 · Schema-in-sema — the medium-term direction
+
+Per Li: *"the question is really about putting signal in
+sema. This is certainly the most important medium-term goal.
+Certainly the first target for Rust generation through forge.
+Specifying datatypes-datatypes to live in sema — and of course
+they should fit in the graph system."*
+
+The endpoint: signal's record-kind type definitions are
+themselves records in sema, of a meta-kind that describes
+record kinds. The flow-graph IS the program — and the *types
+of records* are flow-graphs too.
+
+```
+                    ┌─────────────────────────┐
+                    │  Today: signal types    │
+                    │  hand-written in Rust   │
+                    │   pub struct Node { … } │
+                    └────────────┬────────────┘
+                                 │
+                                 │ direction
+                                 ▼
+                    ┌─────────────────────────┐
+                    │  Eventually:            │
+                    │  signal's types are     │
+                    │  records in sema —      │
+                    │  Graph + Node + Edge    │
+                    │  whose Nodes are        │
+                    │  field-of-type          │
+                    │  descriptors            │
+                    │                         │
+                    │  forge + prism emit     │
+                    │  the Rust types from    │
+                    │  these records          │
+                    │                         │
+                    │  Adding a record kind   │
+                    │  = editing records.     │
+                    └─────────────────────────┘
+```
+
+**Implication for the first mentci-ui.** mentci-lib's schema
+knowledge today is compile-time — it sees the hand-written
+signal types directly. The schema-aware constructor flows in
+§9 work this way.
+
+**The design must not preclude the swap.** mentci-lib's
+constructor flows treat schema as *data they consume*, not as
+hardcoded knowledge they embed in flow code. Today the data
+comes from compile-time-derived metadata; tomorrow the data
+comes from sema. Either way, the flows render the same.
+
+**Order.** Schema-in-sema is medium-term — after the first
+mentci-ui exists, after forge can generate Rust, after the
+node-kind family in `signal/flow.rs` has stabilised. Until
+then, compile-time schema serves the first mentci-ui.
+
+---
+
+## 14 · Identity + Tweaks
+
+Per Li: *"sure, lets implement that, its not hard. And a
+'mentci config/tweaks' index for those styles."*
+
+Two new record kinds land in signal:
+
+### `Principal`
+
+```
+   Principal { ... }
+   ↑
+   referenced from:
+     - capability tokens (the "issuer / subject" today
+       conceptually carried in tokens; now an explicit ref)
+     - ChangeLogEntry's "by" field
+     - Tweaks (per-Principal preferences)
+```
+
+Concrete shape lands in skeleton-as-design in `signal/`. For
+the first mentci-ui: a single default Principal exists at
+genesis (representing the local human). Multi-Principal
+support comes when the authz model lands.
+
+### `Tweaks`
+
+```
+   Tweaks {
+       principal: Slot,         ← whose tweaks
+       theme:     Slot,         ← Theme record
+       layout:    Slot,         ← Layout record
+       keybinds:  Slot,         ← KeybindMap record
+       ...
+   }
+```
+
+A *per-Principal index* of style/configuration records (Li's
+phrasing). Each preference category is a record on its own (see
+§15); Tweaks is the bundle that ties them to a Principal.
+
+Editing one Tweak — pick a different Theme, change a
+keybind — is the same Mutate flow as editing any record.
+Visible in the wire pane; loggable in history; recursively
+introspectable.
+
+The mentci-egui status bar `[⌗ tweaks]` button opens the
+Tweaks editor for the current Principal.
+
+---
+
+## 15 · Theme / layout record kinds — shaped by egui
+
+Per Li: F is *"tied to a research on the rendering/layout
+features of the first GUI we chose."*
+
+What egui exposes:
+
+- **Visuals** — colours, stroke widths, rounding, spacing,
+  text styles. Every widget reads from `Visuals`; overriding
+  Visuals re-themes the whole app.
+- **Layout** — egui's layout is mostly imperative (described
+  in render code). Persistable bits: panel widths, pane
+  visibility, splitter positions. egui's `Memory` already
+  persists these; what's new in mentci is they live in sema
+  instead of egui's own memory, so they survive across
+  sessions and across machines.
+- **Custom rendering** — the canvas paints its own glyphs,
+  strokes, colours; needs per-kind and per-RelationKind data
+  to do so.
+
+Given Li's "intent not appearance" answer: themes describe
+*semantic* intent (colour names like "selected", "stale",
+"rejected"); each shell maps to its native palette.
+
+**First record kinds for the workbench:**
+
+| Kind | What it carries |
+|---|---|
+| `Theme` | semantic palette: `selected`, `stale`, `rejected`, `pending`, `bg`, `fg`, `accent`, … (each a typed colour-intent slot, not RGB) |
+| `Layout` | pane visibility (Diagnostics auto / Wire on-off), pane sizes (left nav width, inspector width, diagnostics height, wire height) |
+| `NodePlacement` | per-Graph-per-Node 2D position (the canvas's "where things are") |
+| `KindStyle` | per-node-kind glyph + colour-intent (Source: "⊙" + accent-A) |
+| `RelationKindStyle` | per-RelationKind stroke style (Flow: solid+arrow, DependsOn: dashed+filled, …) |
+| `KeybindMap` | gesture/key → action mapping |
+
+Each is small and focused. Tweaks (§14) references one of
+each per Principal.
+
+For the first mentci-egui: built-in defaults in mentci-lib for
+each kind so the surface works on a fresh sema. First user
+edit of a Tweak inserts the corresponding record. The default
+ladder is the bootstrap.
+
+---
+
+## 16 · Engine-wide wire-tap — documented for later
+
+Per Li: *"I absolutely want this. further down the road, but
+document it for later design."*
+
+Concept: criome exposes a "wire-tap" subscription that streams
+*every signal frame* across *every connected client* to the
+subscriber. The introspecting human in mentci-egui can see
+what every other agent (LLM, script, CI harness) is doing in
+real time. Engine-wide observability.
+
+Constraints to think about when designing it later:
+
+- **Scope of taps.** Tap everything? Tap by client? Tap by
+  verb? Tap by record-kind?
+- **Privacy of payloads.** A wire-tap subscriber sees frame
+  payloads that other clients sent — capability-token
+  semantics must allow or refuse this.
+- **Frame ordering.** Frames from different connections
+  interleave; the tap subscriber needs ordering metadata
+  (timestamp, originating connection id).
+- **Mentci-egui UI shape.** When the wire pane gets a "show
+  all connections" toggle, it needs to render frames with
+  their originating-connection label, distinct from this-
+  connection.
+
+The first mentci-ui's wire pane is this-connection-only. The
+UI shape leaves room for the toggle without redesign — frames
+already carry direction (request/reply/push); adding an
+originating-connection field is additive.
+
+---
+
+## 17 · What this asks of the engine
+
+- **Subscribe ships as part of this milestone.** Foundational.
+- **Subscribe pushes the full updated record.**
+- **State is representable.** Every kind has a canonical visual
+  rendering.
+- **Diagnostics carry structured suggestions.** Not strings;
+  actionable.
 - **Wire frames are inspectable typed payloads end-to-end.**
-- **Subscriptions push whole records.** Diff reconstruction is
-  fragile; full records on push.
-- **Cascades are observable.** When write A triggers
-  derivation B, both are visible.
+- **Cascades are observable.** Triggered derivations visible,
+  not collapsed.
 - **Time is queryable.** History scrubber implies point-in-time
   reads against sema's bitemporal index.
-- **Nexus rendering is a daemon-served service.** The
-  nexus-daemon's bright-line scope (signal↔nexus translation
-  only) makes it usable by the agent surface and by mentci's
-  display layer in exactly the same way.
-- **Visual configuration as records is welcome.** Theme,
-  Layout, NodePlacement, KeybindMap as candidate record kinds.
-  Many small kinds (one per concern), per the engine's
-  existing pattern.
-- **The agent themselves is eventually a record.** A
-  `Principal` record kind makes "who is acting" introspectable
-  and connects to the authz model. Implicit principal is the
-  starting point; explicit Principal records land when the
-  authz model lands.
-
-The deepest ask: **nothing the engine does is hidden from the
-human shaping it.** The surface is itself part of the engine's
-introspectable state.
+- **nexus-daemon is a translation service** with bright-line
+  scope. Already encoded in nexus/ARCH.
+- **New record kinds land in signal:** `Principal`, `Tweaks`,
+  `Theme`, `Layout`, `NodePlacement`, `KindStyle`,
+  `RelationKindStyle`, `KeybindMap`.
+- **Schema-in-sema is the medium-term direction.** The first
+  target for forge's Rust generation. Design accommodates the
+  swap from compile-time schema to sema-records schema in
+  mentci-lib.
+- **Engine-wide wire-tap documented for later.** Not blocker;
+  not precluded.
 
 ---
 
-## 13 · Still open
+## 18 · The one remaining decision
 
-The dance of design/implement/review needs only a small set of
-things settled before the first mentci-egui can take shape.
-Most other questions — pane micro-behaviours, theme
-specifics, layout details, multi-graph navigation paradigms —
-will answer themselves once the surface exists and the second
-review cycle begins. Below are the questions whose answers
-genuinely block, or would meaningfully shape what we build.
+Only one decision genuinely blocks starting:
 
-### Q-A · The mentci-lib contract shape
+**Confirm Approach B (MVU) for mentci-lib's contract shape.**
 
-mentci-lib defines the interfaces the GUI shells implement.
-What *kind* of contract?
+The deep dive in §12 lays out the three candidates, the
+trade-offs, and recommends B by clarity + correctness + beauty
++ foreign-interface fit. If B is right, mentci-lib's
+skeleton-as-design begins shaping the WorkbenchState +
+WorkbenchView + UserEvent + EngineEvent + Cmd quartet, with the
+schema metadata they consume initially compile-time-derived
+and later sema-sourced.
 
-- **Trait-based view contracts.** mentci-lib exposes traits
-  per pane (`CanvasView`, `InspectorView`, `DiagnosticsList`,
-  `WireStream`, …). Each trait provides current data + accepts
-  user events. The shell `impl`s rendering for each trait. Most
-  Rust-native; awkward for Flutter via foreign-interface.
-- **Data-and-events (MVU-shaped).** mentci-lib produces a
-  `WorkbenchView` data structure each frame; the shell renders
-  it. The shell pushes `UserEvent`s back. Maps cleanly to
-  immediate-mode (egui) and Elm-architecture (iced) and
-  declarative (Flutter); slightly more allocation per frame
-  for the snapshot.
-- **Async-channel + queries.** mentci-lib runs as actors; the
-  shell holds channel handles for each pane (subscribe to
-  changes; send events). Fits ractor style; harder for foreign
-  interfaces.
+If A or C is preferred, the deep dive shows what's gained and
+lost.
 
-The choice constrains both the family's portability and the
-shape of mentci-lib's internals. Recommendation by clarity +
-correctness: data-and-events (MVU). It matches subscription
-semantics, ports to any GUI library, and keeps mentci-lib's
-internal evolution decoupled from GUI shell evolution. But Li
-has not stated a preference, and this is the first thing the
-work will have to commit to.
-
-### Q-B · Subscribe payload shape
-
-For the canvas to be live, criome must push something on each
-relevant change. What does the push contain?
-
-- **The full updated record.** Simple; trivially correct;
-  bandwidth grows with record size.
-- **The slot + new content hash.** Tiny; mentci-lib re-fetches.
-  But re-fetching is an additional round-trip per push, which
-  smells like polling-with-extra-steps.
-- **The full record + the diff against the prior revision.**
-  Diff for incremental UI work; full record as ground truth.
-  More to design.
-
-Recommendation by elegance + push-not-pull: **full updated
-record**. Re-fetch on push is a poll-shaped pattern; diff-only
-is fragile when mentci-lib doesn't have the prior version
-cached. The simplest correct shape is "what changed, in full."
-But this is criome's design, not mentci's, and Li is the right
-person to settle it.
-
-### Q-C · Schema-as-records vs compile-time codegen
-
-mentci-lib's constructor flows surface the right fields per
-verb. The schema knowledge can come from:
-
-- **Compile-time codegen from signal Rust types.** mentci-lib
-  reads the signal types at build time, generates the
-  constructor-flow descriptions. The schema is in code.
-- **Runtime schema records.** Sema holds records describing
-  every record kind ("a Node has fields name, kind"; "a Edge
-  has fields from, to, kind"; "RelationKind has variants Flow,
-  DependsOn, …"). mentci-lib reads them at startup. The
-  schema is itself sema state.
-
-The runtime path is recursively introspectable — the schema is
-a record like everything else, edited the same way, visible in
-the wire pane. That's the deeper-introspection answer. The
-compile-time path is simpler today and matches signal's
-existing closed-enum pattern.
-
-This is one of the deepest engine questions in the report. Li
-should weigh in: does the schema itself live in sema, or in
-binaries?
-
-### Q-D · Engine-wide wire-tap
-
-The wire pane shows frames *from this connection*. An
-engine-wide wire-tap subscription — "see every signal frame
-across every connected client" — would let the human see all
-agent activity, not just their own. This is a deeper
-introspection capability that requires criome to expose a
-wire-tap subscription verb.
-
-This isn't blocking the first mentci-egui. But Li should
-decide whether to *plan* for it now (so the wire pane's UI
-shape leaves room) or treat it as a later, separate
-introspection feature. The report's current shape assumes
-this-connection-only.
-
-### Q-E · Identity / Principal kind
-
-Themes, layouts, node-positions are personal — different
-agents want different ones. To represent that properly, sema
-needs a `Principal` record kind (who is acting; whose
-preferences these are). This connects to the authz model's
-principal references in capability tokens.
-
-The first mentci-egui can stub this — single user, single
-machine, implicit principal. But a Principal kind is implied
-by everything else in the report and will land sooner rather
-than later. Li should decide whether the first mentci-egui
-ships with implicit principal or with a Principal kind from
-the start.
-
-### Q-F · Theme/layout record kinds — granularity now
-
-Granularity follows the existing one-kind-per-concept pattern:
-candidate kinds include `Theme`, `Layout`, `NodePlacement`,
-`PaneVisibility`, `KeybindMap`. The agent's recommendation is
-many small kinds. But the *exact set* — which ones land in
-signal alongside Graph/Node/Edge as part of getting the first
-mentci-egui working — is Li's call. (This question is not a
-blocker; mentci-lib can ship with built-in defaults until the
-records exist. But the work to add the kinds wants a target
-list.)
+Everything else this report describes can begin under any
+contract shape; the contract is the only thing the work needs
+fixed before code lands.
 
 ---
 
-### What else is *not* on this list (and why)
-
-The following the agent has now answered for itself by
-reasoning from elegance / correctness / beauty. They are
-no longer open; they appear in the body of this report as
-settled.
-
-- mentci-lib heavy / GUI shell thin (Li answered)
-- nexus connection persistent (Li answered)
-- nexus down → error pane (Li answered)
-- criome down → mentci frozen (Li answered)
-- nexus-daemon's role bright-line clear (Li, and now also in
-  nexus/ARCHITECTURE.md)
-- Family members converge on the same workbench logic; each
-  feels native via its shell (follows from Li's answer to Q1)
-- Constructor-flow centralisation in mentci-lib (follows from
-  Li's answer to Q1)
-- Validity rules narrow constructor-flow choices (follows from
-  perfect-specificity invariant)
-- Theme/layout intent vs appearance: **intent**. Semantic
-  ("selected", "stale") is portable; appearance (RGB values)
-  couples themes to renderers. Intent is more meaningful and
-  more introspectable.
-- First-run bootstrap: built-in defaults in mentci-lib until
-  the user's first theme/layout assertion replaces them.
-- Per-user themes: yes; depends on identity (Q-E).
-- Cross-connection visibility: yes; surface "another
-  connection edited X" as a visible event when Subscribe
-  catches it.
-- Pending-flow conflict: surface and re-confirm
-  (accept-and-reflect).
-- Node positions as records: yes (recursive consistency with
-  layout-as-records).
-- Large-graph degradation: pan/zoom + mini-map first;
-  level-of-detail and filtering follow when scale demands.
-- Nested Graphs (`Graph` Contains `Graph`): inline-with-
-  collapse default; drill-in available on demand.
-- mentci-egui as a Graph itself (self-host): eventually yes;
-  the architecture should not preclude it but the first
-  mentci-egui need not be a Graph.
-- Multi-graph navigation: try several paradigms over time
-  (Li answered).
-
----
-
-## 14 · Not in scope
+## 19 · Not in scope
 
 - **Visual aesthetics.** Final palette, iconography, type
-  choices. Obvious choices for now; rich palette comes later
-  (possibly via theme records).
-- **mentci-lib's API surface in code.** Skeleton-as-design
-  belongs in mentci-lib's own ARCHITECTURE.md; this report
-  describes what the API must enable, not its types.
-- **Mobile / alt form factors.** Desktop first.
+  choices — obvious choices for now; rich palette via theme
+  records later.
+- **mentci-lib's API in code.** Skeleton-as-design belongs in
+  mentci-lib's own ARCHITECTURE.md.
+- **Mobile / alt form factors.** Desktop-first.
 - **The eventual universal-UI scope.** This is the
-  introspection workbench that begins earning the wider
-  scope.
+  introspection workbench that begins earning the wider scope.
 
 ---
 
-## 15 · Lifetime
+## 20 · Lifetime
 
-This report lives until the first mentci-egui shows records
-on the canvas, accepts a constructor-flow gesture, and
-displays a diagnostic served by criome. By then most of §13
-will have answered itself through implementation; what
-remains can move into the docs of the components that house
-it (mentci-lib's ARCH for the contract; signal's evolution
-notes for new record kinds; criome's ARCH for engine-side
-asks).
+This report lives until the first mentci-egui shows records on
+the canvas, accepts a constructor-flow gesture, and displays a
+diagnostic served by criome — at which point most of its
+content has migrated into mentci-lib's ARCH (the contract,
+state shapes), signal's evolution notes (the new record kinds),
+criome's ARCH (Subscribe payload, wire-tap deferral), and
+egui-specific files for the rendering details.
 
-The dance — design / implement / review — produces answers
-that no amount of pre-design produces. This report's purpose
-is not to settle every question; it is to settle enough that
-the work can begin.
+The dance — design / implement / review — produces answers no
+amount of pre-design produces. This report's purpose is not to
+settle every question; it is to settle enough that the work can
+begin. After the contract decision in §18 it is.
 
 ---
 
