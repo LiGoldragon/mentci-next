@@ -1,0 +1,933 @@
+# 114 — Mentci stack supervisor: design draft
+
+*A draft sketch of how a `mentci up` / `mentci down` pair would assemble
+the running stack. The supervisor itself is a small new crate;
+configuration is a single nota record; the nix flake builds every
+daemon + the supervisor + a wrapper that runs them as one foreground
+unit. Lifetime: until Li answers the §10 questions and this report
+either rolls into a successor or the design lands as skeleton code in
+the new crate.*
+
+---
+
+## 0 · What we want, stated positively
+
+A user typing one command at a fresh checkout gets the full mentci
+workbench running:
+
+```
+$ nix run .#up
+   ↳ builds every daemon if needed (cached after first time)
+   ↳ creates the per-user state directories (sema.redb, arca root, run dir)
+   ↳ launches each daemon with the right socket paths + env
+   ↳ launches mentci-egui pointed at those sockets
+   ↳ supervises everything in the foreground
+   ↳ respawns crashed daemons with bounded backoff
+   ↳ Ctrl-C tears the whole stack down cleanly
+```
+
+A second command swaps a daemon for an upgraded build without taking
+the workbench down:
+
+```
+$ nix run .#reload criome     # rebuild criome, swap the running daemon
+```
+
+A third gives an explicit teardown for cases where the supervisor is
+running detached:
+
+```
+$ nix run .#down              # graceful shutdown via the supervisor's
+                              #  control socket
+```
+
+These three are the user-facing surface. Everything else is the
+supervisor's internal concern.
+
+---
+
+## 1 · Topology — what the supervisor is supervising
+
+### 1.1 Today (criome + nexus + mentci-egui)
+
+```
+                       ┌────────────────────────┐
+                       │      mentci-egui       │   GUI process
+                       │ tokio-runtime + driver │   (user-facing)
+                       └─────┬────────────┬─────┘
+                             │            │
+                /run/user/$UID/mentci/    │
+                       criome.sock        │
+                             │            │  /run/user/$UID/mentci/nexus.sock
+                             ▼            ▼
+                       ┌──────────┐  ┌──────────┐
+                       │ criome-  │  │ nexus-   │   long-running daemons
+                       │ daemon   │  │ daemon   │
+                       └────┬─────┘  └──────────┘
+                            │
+                ┌───────────▼────────────────┐
+                │  ~/.local/share/mentci/    │   on-disk state
+                │       sema.redb            │   (criome owns)
+                └────────────────────────────┘
+```
+
+The above three processes plus the on-disk state are everything that
+needs orchestrating today.
+
+### 1.2 What lands later (forge + arca)
+
+```
+                       ┌────────────────────────┐
+                       │      mentci-egui       │
+                       └─────┬────────────┬─────┘
+                             │            │
+                       ┌─────▼─────┐ ┌────▼─────┐
+                       │ criome-   │ │ nexus-   │
+                       │ daemon    │ │ daemon   │
+                       └─────┬─────┘ └──────────┘
+                             │ signal-forge
+                             ▼
+                       ┌──────────┐
+                       │  forge-  │  links prism; runs nix build;
+                       │  daemon  │  bundles into ~/.arca/_staging/
+                       └─────┬────┘
+                             │ signal-arca
+                             ▼
+                       ┌──────────┐
+                       │  arca-   │  verifies token; computes blake3;
+                       │  daemon  │  atomic-moves into <store>/<blake3>/
+                       └─────┬────┘
+                             │
+                       ┌─────▼────────┐
+                       │  ~/.arca/    │  content-addressed FS
+                       │   <store>/   │  (arca-daemon owns)
+                       │   <blake3>/  │
+                       └──────────────┘
+```
+
+The supervisor design has to anticipate this. Adding forge and arca
+later should not require rewriting the supervisor — only adding two
+entries to the config and naming two more sockets.
+
+### 1.3 The directory layout the supervisor creates
+
+```
+   ${XDG_RUNTIME_DIR}/mentci/         # ephemeral; tmpfs on Linux
+       criome.sock                    # signal      (criome's listener)
+       nexus.sock                     # signal      (nexus's listener)
+       forge.sock                     # signal-forge (forge's listener)
+       arca.sock                      # signal-arca (arca's listener)
+       supervisor.sock                # supervisor's control socket
+       supervisor.pid                 # for `mentci down` from another shell
+
+   ${XDG_DATA_HOME}/mentci/           # persistent
+       sema.redb                      # criome owns
+
+   ${HOME}/.arca/                     # persistent, criome ARCH §5
+       _staging/<deposit-id>/         # write-only by writers
+       <store-name>/<blake3>/         # written only by arca-daemon
+       <store-name>/index.redb        # arca-daemon owns
+```
+
+`XDG_RUNTIME_DIR` is per-user, per-session, tmpfs-backed on Linux —
+exactly the right place for sockets. `XDG_DATA_HOME` is the persistent
+store. Both fall back to sensible defaults when unset.
+
+---
+
+## 2 · The supervisor crate
+
+Per [tools-documentation/programming/micro-components.md](../repos/tools-documentation/programming/micro-components.md):
+adding a feature defaults to a new crate. This *is* a new capability —
+process supervision over the sema-ecosystem daemons — so it lives in
+its own repo with its own `Cargo.toml` + `flake.nix` + tests.
+
+**Provisional name: `helm`.** Short, reads as English, fits the
+"steers the ship" metaphor that accompanies criome's planetary /
+maritime naming neighborhood (see §10 Q1 for alternatives).
+
+### 2.1 What helm owns
+
+```
+   ┌────────────────────────────────────────────────────────────────┐
+   │                          helm                                  │
+   ├────────────────────────────────────────────────────────────────┤
+   │  reads:    Config (nota text → typed Rust via nota-codec)      │
+   │                                                                 │
+   │  spawns:   one child OS process per (Daemon ...) entry         │
+   │            via std::process::Command + tokio::process::Child   │
+   │                                                                 │
+   │  watches:  child exits via tokio's `wait()`                    │
+   │            file-system events on watched src/ dirs (optional)  │
+   │            its own control socket (`reload`, `stop`,           │
+   │              `swap-binary <name>`)                             │
+   │                                                                 │
+   │  policies: RestartPolicy per daemon                             │
+   │              { Always | OnFailure | Never }                     │
+   │            ExponentialBackoff with cap                          │
+   │            HealthProbe: Handshake-on-socket-or-fail (per-      │
+   │              daemon, before declaring it ready)                 │
+   │                                                                 │
+   │  surfaces: stdout/stderr per daemon, prefixed by name           │
+   │            its own structured log line per lifecycle event     │
+   │                                                                 │
+   │  shuts down: one SIGTERM per child, then SIGKILL after grace   │
+   │              period. Reverse spawn order so dependents go      │
+   │              first (mentci-egui before criome before nexus).   │
+   └────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2 What helm explicitly does NOT do
+
+Per the criome-runs-nothing rule applied analogically:
+
+- **No nix invocations.** helm never calls `nix build`. Upgrades go
+  through `nix run .#reload <name>` which rebuilds with nix and then
+  asks the running helm to swap the path.
+- **No record awareness.** helm does not parse signal frames, does not
+  speak to criome, does not know what's in sema. Its only knowledge of
+  the daemons is "this binary path at this socket path with this env."
+- **No log aggregation database.** Lines are passed through to the
+  controlling terminal (or to journald when running under systemd).
+  Persistent log analysis is a different capability for a different
+  crate.
+- **No multi-tenant supervision.** One helm per user session.
+  System-wide criome lives in NixOS service modules
+  ([criome/ARCHITECTURE.md §8](../repos/criome/ARCHITECTURE.md)), not
+  in helm.
+
+### 2.3 Skeleton types · ([tools-documentation/rust/style.md](../repos/tools-documentation/rust/style.md))
+
+```rust
+// helm/src/config.rs  — what the nota config deserialises into
+
+pub struct Config {
+    pub run_dir: PathBuf,                 // sockets live here
+    pub data_dir: PathBuf,                // sema.redb, etc.
+    pub arca_root: PathBuf,               // ~/.arca
+    pub daemons: Vec<DaemonSpec>,         // order = launch order
+    pub frontend: Option<DaemonSpec>,     // mentci-egui (last to launch,
+                                          //  first to tear down)
+}
+
+pub struct DaemonSpec {
+    pub name: DaemonName,                 // newtype: "criome" | "nexus" | …
+    pub binary: PathBuf,                  // nix-store path
+    pub args: Vec<String>,
+    pub env: Vec<EnvAssignment>,          // typed; ${var} expansion
+    pub socket: Option<PathBuf>,          // listener socket if any
+    pub restart_policy: RestartPolicy,
+    pub depends_on: Vec<DaemonName>,      // spawn ordering
+    pub readiness: Readiness,
+}
+
+pub enum RestartPolicy { Always, OnFailure, Never }
+
+pub enum Readiness {
+    /// Wait for the listener socket to exist before launching dependents.
+    SocketBound { path: PathBuf, timeout: Duration },
+    /// Wait for a successful signal::Handshake to round-trip.
+    Handshake { socket: PathBuf, timeout: Duration },
+    /// No probe; mark ready immediately.
+    Immediate,
+}
+```
+
+```rust
+// helm/src/supervisor.rs  — methods on types, no free functions
+
+pub struct Supervisor {
+    config: Config,
+    children: HashMap<DaemonName, Child>,
+    control: ControlSocket,
+}
+
+impl Supervisor {
+    pub fn new(config: Config) -> Self { … }
+    pub async fn launch_all(&mut self) -> Result<()> { … }
+    pub async fn shutdown_all(&mut self, grace: Duration) -> Result<()> { … }
+    pub async fn swap(&mut self, name: DaemonName,
+                      new_binary: PathBuf) -> Result<()> { … }
+    pub async fn run(&mut self) -> Result<()> { …
+        // tokio::select! over child exits + control socket events +
+        // SIGINT/SIGTERM. Beauty rule: this is the only function that
+        // owns the loop; everything else returns and lets it drive.
+    }
+}
+```
+
+This is a sketch. The actual shapes land as skeleton code in the new
+repo before the first commit (per the [criome ARCH §10 "Skeleton-as-design"
+rule](../repos/criome/ARCHITECTURE.md#10--rules)).
+
+---
+
+## 3 · Configuration in nota
+
+The configuration is itself a typed record — call it `Config` — encoded
+in nota text and parsed via nota-codec into the Rust struct above. This
+eats our own dog food: nota is the typed-text language; using it for
+configuration validates that the language reaches even the lowest-stakes
+surface.
+
+### 3.1 Example shape — ${XDG_CONFIG_HOME}/mentci/helm.nota
+
+```nota
+(Config
+  run_dir   "${XDG_RUNTIME_DIR}/mentci"
+  data_dir  "${XDG_DATA_HOME}/mentci"
+  arca_root "${HOME}/.arca"
+
+  daemons [
+    (Daemon
+      name           "criome"
+      binary         "@criome-daemon@"          ; nix-substituted at build
+      socket         "${run_dir}/criome.sock"
+      env            [
+        (Env "CRIOME_SOCKET" "${run_dir}/criome.sock")
+        (Env "SEMA_PATH"     "${data_dir}/sema.redb")
+      ]
+      restart_policy Always
+      depends_on     []
+      readiness      (Handshake
+                       socket  "${run_dir}/criome.sock"
+                       timeout 5s))
+
+    (Daemon
+      name           "nexus"
+      binary         "@nexus-daemon@"
+      socket         "${run_dir}/nexus.sock"
+      env            [
+        (Env "NEXUS_SOCKET"  "${run_dir}/nexus.sock")
+        (Env "CRIOME_SOCKET" "${run_dir}/criome.sock")
+      ]
+      restart_policy Always
+      depends_on     [criome]
+      readiness      (Handshake
+                       socket  "${run_dir}/nexus.sock"
+                       timeout 5s))
+  ]
+
+  frontend
+    (Daemon
+      name           "mentci-egui"
+      binary         "@mentci-egui@"
+      env            [
+        (Env "CRIOME_SOCKET" "${run_dir}/criome.sock")
+        (Env "NEXUS_SOCKET"  "${run_dir}/nexus.sock")
+      ]
+      restart_policy OnFailure
+      depends_on     [criome nexus]
+      readiness      Immediate))
+```
+
+The nota syntax above is a placeholder shape — actual delimiters /
+sigils follow nota's grammar (the delimiter-family matrix in
+[criome ARCHITECTURE §9](../repos/criome/ARCHITECTURE.md#9--grammar-shape)).
+The point is: typed records, parser already exists, validation is just
+the type checker.
+
+### 3.2 Why nota for config (and not toml/yaml)
+
+- **Workspace-wide contract uniformity.** Every typed text in the
+  ecosystem is nota; every typed binary is rkyv. Config is typed text
+  → nota.
+- **Validation is free.** nota-codec produces a `Config` value or a
+  typed error. No second validation layer.
+- **Self-hosting feeds the loop.** Once schema-in-sema lands, this
+  config-record's *type definition* could itself be a sema record —
+  the supervisor reads the type from the engine it supervises. Not
+  needed for the first version, but the path stays open.
+
+### 3.3 ${var} expansion
+
+A small substitution pass before nota-decoding: `${XDG_RUNTIME_DIR}`,
+`${HOME}`, plus the config-internal references (`${run_dir}`). This
+keeps the config readable and lets the same file work across users.
+
+The `@criome-daemon@` placeholder is filled in by nix at build time
+(per [tools-documentation/rust/nix-packaging.md](../repos/tools-documentation/rust/nix-packaging.md)
+substitution patterns), so the generated config carries fixed-store
+paths.
+
+---
+
+## 4 · Lifecycle visuals
+
+### 4.1 Spawn
+
+```
+   helm starts
+       │
+       ▼
+   read nota config
+       │
+       ▼
+   ensure run_dir + data_dir + arca_root exist (mkdir -p; perms 0700)
+       │
+       ▼
+   topological-sort daemons by depends_on
+       │
+       ▼
+   for each daemon in order:
+       │
+       ├── std::process::Command::new(binary)
+       │      .args(args)
+       │      .envs(resolved env)
+       │      .stdout/stderr(piped → log-prefixer task)
+       │      .spawn() → Child
+       │
+       ├── readiness probe:
+       │      SocketBound  → poll for socket file existence
+       │      Handshake    → connect + signal::Handshake exchange
+       │      Immediate    → return immediately
+       │
+       └── on success: store Child in self.children
+           on timeout: SIGTERM child, error out of launch_all
+       │
+       ▼
+   seed criome from genesis.nexus if sema is empty (§4.2)
+       │
+       ▼
+   spawn frontend (mentci-egui) the same way
+       │
+       ▼
+   enter main run loop (§4.5)
+```
+
+### 4.2 Seeding sema from `genesis.nexus`
+
+This is already canon — [criome ARCHITECTURE §10 "Bootstrap rung by rung"](../repos/criome/ARCHITECTURE.md#10--rules):
+
+> No "before the engine runs" mode; criome runs from the first instant,
+> sema starts empty, nexus messages populate it (including seed
+> records via `genesis.nexus`, fed through nexus by the launcher).
+
+helm is "the launcher" in that sentence. Without seeded data,
+mentci-egui paints an empty GraphsNav and an empty canvas — technically
+correct but pedagogically useless. Seeding gives the user something to
+click on the first time the workbench opens.
+
+#### 4.2.1 Where the seed file lives
+
+```
+   nix-store path:
+       ${self.packages.${system}.helmConfig}/genesis.nexus
+
+   user override (read first if present):
+       ${XDG_CONFIG_HOME}/mentci/genesis.nexus
+```
+
+Two reasons for the override path: a user can edit it without
+rebuilding the flake; and project-specific seeds (a particular Graph
+to demo) can sit alongside the project's `helm.nota`.
+
+#### 4.2.2 The seed flow
+
+```
+   helm has just confirmed criome readiness (Handshake round-trip OK)
+       │
+       ▼
+   issue Query(Graph wildcard) over criome.sock
+       │
+       ▼  reply Records::Graph
+       │
+       ├── empty? ──► proceed to seed
+       │
+       └── non-empty? ──► skip seeding (sema already populated;
+                          do not double-assert and risk duplicates
+                          until idempotent Assert lands)
+       │
+       ▼
+   read genesis.nexus from the resolved path
+       │
+       ▼
+   pipe its contents through nexus-cli with NEXUS_SOCKET pointed
+   at ${run_dir}/nexus.sock:
+       cat genesis.nexus | nexus-cli
+       │
+       ▼  for each top-level (Assert ...) form:
+       │     nexus-cli reads, nexus-daemon parses + forwards as
+       │     signal::Request::Assert, criome writes, returns
+       │     Outcome(Ok) per the [editor flow][edit-flow]
+       │
+       ▼
+   on any reply that's not Outcome(Ok):
+       log the diagnostic
+       (do NOT abort startup — partial seed is better than no
+        workbench; user can fix and re-run)
+       │
+       ▼
+   continue to spawning mentci-egui
+
+[edit-flow]: ../repos/criome/ARCHITECTURE.md#71-edit-m0
+```
+
+#### 4.2.3 Why `nexus-cli`, not direct rkyv asserts
+
+helm could in principle build `signal::Frame` values itself and write
+them to `criome.sock`, skipping nexus entirely. Reasons to go through
+nexus instead:
+
+- **Invariant B as a discipline**, not just a runtime fact: text only
+  crosses at the nexus boundary. Even seed data written by an
+  internal tool respects the boundary. helm stays free of any signal
+  schema knowledge.
+- **Editability.** `genesis.nexus` is human-readable and
+  human-editable; the same file lives in the user's CONFIG dir as a
+  starting point for their own seeds.
+- **One bootstrap path, exercised every session.** The seed flow is
+  the same flow nexus-cli already does for any text input — no
+  separate "internal seed" path with its own bugs.
+
+#### 4.2.4 Sketch of `genesis.nexus`
+
+(Provisional shape — actual nexus syntax follows the
+[delimiter-family matrix](../repos/criome/ARCHITECTURE.md#9--grammar-shape).)
+
+```nexus
+;; A Graph the workbench paints on first run.
+(Assert (Graph "First Graph"
+                nodes:    [@ticks @double @stdout]
+                edges:    [@e1 @e2]
+                subgraphs: []))
+
+;; Three Nodes that live inside it.
+(Assert (Node "ticks"))
+(Assert (Node "double"))
+(Assert (Node "stdout"))
+
+;; Two Edges of kind Flow connecting them in a chain.
+(Assert (Edge from:@ticks  to:@double  kind:Flow))
+(Assert (Edge from:@double to:@stdout  kind:Flow))
+
+;; A Principal so the user has a default identity.
+(Assert (Principal display_name: "operator" note: ""))
+```
+
+The `@name` form is the bind-back convention — the parser captures
+each Assert's resulting slot under the name so subsequent records can
+reference it. (Whether nexus already supports this in
+assertion-positions is §10 Q11 below — the alternative is two passes,
+or letting criome resolve names via the `name` field after the fact.)
+
+#### 4.2.5 Seed in upgrade / reload paths
+
+The "is sema empty?" check protects against re-seeding:
+
+- Fresh install → seed runs → records appear in sema.
+- Subsequent `mentci up` → query finds existing Graphs → seed skipped.
+- `mentci down && rm sema.redb && mentci up` → seed runs again.
+- `mentci reload criome` → no seed touched (criome restarts against
+  the same sema; sema is non-empty; skip).
+
+A `mentci up --reseed` flag could force a re-run for cases where the
+user *wants* to re-seed (after editing `genesis.nexus`). Worth having;
+small to add.
+
+### 4.3 Respawn on crash
+
+```
+   tokio::select! observes child.wait() resolved
+       │
+       ▼
+   match restart_policy:
+       │
+       ├── Never:     mark dead; if any dependent is alive, log warning;
+       │              continue
+       │
+       ├── OnFailure: if exit code = 0, mark stopped and continue;
+       │              else fall through to Always logic
+       │
+       └── Always:    schedule respawn after backoff:
+                        backoff[0] = 250ms
+                        backoff[N] = min(backoff[N-1] * 2, 60s)
+                        reset backoff to 250ms after 60s of stable run
+                      then re-launch (with same readiness probe)
+                      and cascade restarts to dependents whose
+                        connections need re-handshake
+                      (criome restart → mentci-egui driver sees
+                        *Disconnected → user clicks reconnect or
+                        we auto-reconnect — see §10 Q5)
+```
+
+### 4.4 Reload / swap (upgrade flow)
+
+```
+   user types `nix run .#reload criome` in another shell
+       │
+       ▼
+   the .#reload app:
+       1. nix build .#criome             (produces /nix/store/<new-hash>/...)
+       2. connect to ${run_dir}/supervisor.sock
+       3. send (ControlMessage Swap name:"criome"
+                                    binary:"/nix/store/<new-hash>/bin/criome-daemon")
+       4. await reply
+       │
+       ▼
+   running helm receives Swap on its control socket:
+       │
+       ├── stop dependents in reverse order
+       │     (mentci-egui kept alive; its driver re-handshakes
+       │      after step 4)
+       │
+       ├── SIGTERM old criome
+       │     wait for exit (or SIGKILL after grace period)
+       │
+       ├── update DaemonSpec.binary to new path
+       │
+       ├── re-launch criome from new binary, run readiness probe
+       │
+       └── re-launch dependents that were stopped
+       │
+       ▼
+   reply: Ok
+       │
+       ▼
+   user's shell prints "criome upgraded; running."
+```
+
+The control protocol itself is a tiny rkyv-framed enum on a UDS — same
+length-prefixed shape as signal but a different schema. Symmetry:
+everything we run speaks length-prefixed rkyv.
+
+### 4.5 Run loop
+
+```
+   loop:
+     tokio::select! {
+       signal::ctrl_c()      → break with reason "ctrl-c";
+       signal::sigterm()     → break with reason "sigterm";
+       child_exit(name, code)→ apply restart_policy(name, code);
+       control_msg(msg)      → dispatch (Reload|Swap|Stop|Status);
+       fs_event(path)        → if path under watched_src:
+                                 emit log "rebuild needed for X";
+                                 (rebuild itself is run by user, not helm)
+     }
+   end:
+   shutdown_all(grace = 5s)
+```
+
+### 4.6 Tear-down
+
+```
+   shutdown signal received (Ctrl-C, SIGTERM, or `mentci down`)
+       │
+       ▼
+   reverse depends_on order:
+       mentci-egui first   (it can re-render its goodbye-state without
+                            criome alive)
+       nexus next
+       criome last         (longest-lived because writes happen here)
+       │
+       ▼
+   for each child in reverse order:
+       send SIGTERM
+       wait up to grace_period (default 5s)
+       on timeout: SIGKILL
+       │
+       ▼
+   remove sockets and the supervisor pid file
+       │
+       ▼
+   helm exits with code 0 (clean) or 1 (any child needed SIGKILL)
+```
+
+---
+
+## 5 · Nix wiring
+
+### 5.1 Flake apps · `mentci/flake.nix`
+
+```nix
+apps.${system} = {
+  up = {
+    type = "app";
+    program = "${pkgs.writeShellScript "mentci-up" ''
+      set -euo pipefail
+      mkdir -p "''${XDG_DATA_HOME:-$HOME/.local/share}/mentci"
+      mkdir -p "''${XDG_RUNTIME_DIR:-/tmp/$UID}/mentci"
+      exec ${self.packages.${system}.helm}/bin/helm \
+        --config ${self.packages.${system}.helmConfig}/helm.nota
+    ''}";
+  };
+
+  down.program = "${pkgs.writeShellScript "mentci-down" ''
+    exec ${self.packages.${system}.helm}/bin/helm-control stop
+  ''}";
+
+  reload.program = "${pkgs.writeShellScript "mentci-reload" ''
+    daemon="''${1:?usage: reload <daemon-name>}"
+    new_path=$(nix build --no-link --print-out-paths .#"''${daemon}")
+    exec ${self.packages.${system}.helm}/bin/helm-control \
+      swap "$daemon" "$new_path/bin/$daemon"
+  ''}";
+};
+```
+
+The `helm` binary supervises; the `helm-control` binary (same crate,
+`[[bin]]` entry) is the one-shot CLI for the control socket — a thin
+sender of `ControlMessage` rkyv frames.
+
+### 5.2 The generated config derivation
+
+```nix
+packages.${system}.helmConfig = pkgs.runCommand "helm-config" { } ''
+  mkdir -p $out
+  substitute ${./helm.nota.in} $out/helm.nota \
+    --replace '@criome-daemon@'  "${self.packages.${system}.criome}/bin/criome-daemon" \
+    --replace '@nexus-daemon@'   "${self.packages.${system}.nexus}/bin/nexus-daemon" \
+    --replace '@mentci-egui@'    "${self.packages.${system}.mentci-egui}/bin/mentci-egui"
+'';
+```
+
+All store paths land in the resolved config. helm itself never invokes
+nix; nix produces the binaries and the config; helm runs them.
+
+### 5.3 NixOS module (later, when CriomOS deploys this)
+
+The same `Config` shape (typed in `helm`) becomes the input to a NixOS
+module that emits one systemd unit per daemon plus one for `helm`
+itself acting as a plain `Type=notify` service. Until then, helm
+foreground-runs in the user's shell.
+
+---
+
+## 6 · How this composes with the dev shell
+
+The `nix develop` shell (already exists in
+[mentci/devshell.nix](../devshell.nix)) gains three convenience aliases:
+
+```bash
+alias up='nix run .#up'
+alias down='nix run .#down'
+alias reload='nix run .#reload'
+```
+
+When iterating on a daemon's Rust source, the loop is:
+
+```
+   edit code
+     │
+     ▼
+   reload <daemon-name>
+     │
+     ▼  (under the hood)
+   nix build .#<daemon>           ← cached; only changed crate rebuilds
+   helm-control swap <name>       ← in-place hot-swap
+     │
+     ▼
+   workbench shows the new behaviour without losing the running session
+```
+
+This is why helm is a separate process from nix, and why the swap path
+goes through a control socket rather than helm watching the filesystem
+itself: the **user controls when a swap happens**, nix is the build
+tool, helm is the runtime.
+
+(File-system watching helm could grow later — `helm watch on` to enable
+auto-rebuild — but not in the first version. Per the
+[push-not-pull discipline](../repos/tools-documentation/programming/push-not-pull.md),
+the rebuild trigger is a *user action* arriving on the control socket,
+not a poll of the source tree.)
+
+---
+
+## 7 · What I think of the ideas in your prompt
+
+In order of how strongly I agree:
+
+**`mentci up` / `mentci down` as the surface — yes, strongly.** This is
+the right shape. A single command bringing the whole stack up keeps
+the friction at zero, and it scales from "one user on a dev machine"
+to "the same machinery wrapped in a NixOS module" without redesign. The
+flake-app form (`nix run .#up`) is the right unwrapping until the
+ergonomic shim (`mentci` CLI) shows it pulls its weight.
+
+**Nota for configuration — yes, slightly with a caveat.** Eating our
+own dog food validates the language at a low-stakes surface, and the
+type-checker-as-validator wins are real. The caveat is bootstrapping:
+nota-codec is a sibling crate that helm has to depend on, and changes
+to the codec break helm's parser. Today the codec is small enough that
+this risk is negligible; if it grows complex, helm could vendor a
+minimal subset. I'd commit to nota for config and revisit if the
+coupling ever bites.
+
+**Coordinator as a small tool — yes, but it has to be its own crate.**
+This is the [micro-components rule](../repos/tools-documentation/programming/micro-components.md):
+new capability = new crate. Putting supervision into mentci or criome
+is the failure mode the rule closes. Naming it `helm` is provisional —
+see §10 Q1.
+
+**Respawn on error — yes, with bounded backoff.** The bounded part is
+load-bearing; without an exponential cap the supervisor turns crash
+loops into fork bombs. The cap shape (250ms → 60s, reset after stable
+run) is well-trodden territory.
+
+**Rebuild / reconfigure on upgrade — yes, but the right shape is
+"swap a binary path on the running supervisor"**, not "supervisor
+rebuilds itself." nix builds; helm runs. Keeping that line clean is
+the same discipline as criome-runs-nothing applied one level out.
+
+**Replace a component with an upgraded version — yes, this is the
+swap operation in §4.3.** The `Reload` is "re-read config from
+disk and apply diffs." The `Swap` is "force this daemon to a new
+binary path even if config didn't change." Both useful; both small.
+
+**The bit I'd push back on:** nothing fundamental. The only place I'd
+sharpen the framing is "a simple tool that will coordinate this." It
+*should* be simple, but supervision touches process lifetimes,
+filesystem state, signals, and IPC — there's load-bearing complexity
+the simplicity has to *contain*, not deny. Beauty test: when the code
+reads as obviously right, the simplicity is real; when it reads as a
+loose collection of edge cases, helm is missing structure.
+
+---
+
+## 8 · What this design does *not* try to be
+
+- **Not a NixOS service module.** Production deploys go through
+  per-host NixOS modules per [criome ARCH §8](../repos/criome/ARCHITECTURE.md#8--repo-layout).
+  helm is for the dev / single-user / foreground case.
+- **Not a container orchestrator.** No images, no networks, no
+  multi-host. One user, one host, one helm.
+- **Not a log aggregator.** Pass-through to stdout/stderr today;
+  structured logging is a separate concern.
+- **Not a build tool.** nix is the build tool; helm runs binaries
+  nix produced.
+- **Not a process-manager replacement for systemd.** Different
+  domain — helm is for the user-session foreground case. Production
+  still goes through systemd via NixOS modules.
+
+---
+
+## 9 · A small invariant table
+
+| concern | helm's answer |
+|---|---|
+| every reusable verb belongs to a noun | `Supervisor::launch_all`, `::shutdown_all`, `::swap` — never free functions |
+| push, not pull | child-exit and control-socket events drive the loop; no polling of process state or filesystem (file-watching is opt-in and on a real `inotify`/`kqueue` notifier, not a poll) |
+| typed-protocol IPC | control socket carries an rkyv-framed `ControlMessage` enum, length-prefixed exactly like signal |
+| typed config | nota record → typed Rust struct via nota-codec |
+| skeleton-as-design | the new `helm` repo opens with the shapes in §2.3 + a `flake.nix`, before the run loop has a body |
+| one capability, one crate, one repo | helm is a new repo; the in-mentci-flake `apps.up/down/reload` is a thin shim |
+
+---
+
+## 10 · Questions for Li (most important first)
+
+These are the answers that shape the design enough that I'd rather
+have them before writing skeleton code than guess.
+
+**Q1 — Name.** `helm` is provisional. Other shapes that read as English
+and fit the workspace's noun-naming neighborhood:
+
+- `helm` — short, "steers the ship," fits criome/forge/arca
+- `kiln` — short, "where firings happen," tool/material like forge
+- `warden` — "watches over"
+- `keeper` — bare, custodial
+- `marshal` — organises, but overlaps with serialisation jargon
+
+Or you have a name I haven't considered. Pick one and I'll thread it
+through.
+
+**Q2 — Scope of `nix run .#up`.** Two interpretations:
+
+- (a) starts every CANON daemon currently in the workspace —
+  criome + nexus + mentci-egui today; criome + nexus + forge + arca
+  + mentci-egui after forge/arca land.
+- (b) starts exactly the daemons mentci-egui needs to function, and
+  forge/arca only when the user explicitly invokes a build.
+
+I'd default to (a) — uniform, predictable, and forge/arca sitting idle
+costs almost nothing. Confirm or correct?
+
+**Q3 — Process model.** Daemons are separate OS processes today and
+the supervisor design assumes that. The alternative is a single
+multi-bin executable with a `--role criome|nexus|...` flag (closer to
+"all the daemons in one nix output"). Separate processes are the
+[micro-components answer](../repos/tools-documentation/programming/micro-components.md);
+single binary saves a few MB of disk. I lean strongly separate; just
+flagging the choice.
+
+**Q4 — Where does state live?**
+
+- `${XDG_DATA_HOME}/mentci/sema.redb` — per-user, persists across reboots,
+  shared between projects. **My default.**
+- `./sema.redb` (current working directory) — per-project, easier to
+  experiment.
+- `${XDG_RUNTIME_DIR}/mentci/sema.redb` — ephemeral, goes away on
+  reboot.
+
+I'd ship per-user-persistent and accept a `--data-dir` override. OK?
+
+**Q5 — Reconnect behaviour on daemon restart.** When helm respawns
+criome after a crash, mentci-egui's driver sees `*Disconnected` and
+the auto-reconnect path is "user clicks the reconnect chip"
+([reports/113 §5.2](113-architecture-deep-map-2026-04-29.md#52--gestures--userevents-what-each-pane-emits-today)).
+Should helm's swap of criome trigger an automatic reconnect on the
+mentci-egui side, or is the chip-click discipline correct (user
+remains in control of when state is replaced)?
+
+**Q6 — `mentci` as a CLI.** I've used `nix run .#up` throughout. The
+ergonomic version is a shim called `mentci` on PATH that dispatches to
+the same flake apps. Do you want the shim from day one (worth the few
+lines of code) or `nix run .#up` is fine until something pushes back?
+
+**Q7 — forge / arca timing.** Should helm's first version anticipate
+forge/arca slots in the config (parser knows about them, rejects
+unknown daemons) or stay strictly current (criome + nexus +
+mentci-egui only, add forge/arca entries when those daemons exist)?
+The first is barely more code and avoids a config schema bump later.
+
+**Q8 — Capability-token bootstrap.** When forge lands, criome signs
+capability tokens; the signing key has to live somewhere. Is helm's
+job to mint the keypair on first run (e.g. into
+`${XDG_DATA_HOME}/mentci/criome.key`) and pass the path as an env
+var, or does criome handle key bootstrap internally? My read of
+[criome ARCH §10.2](../repos/criome/ARCHITECTURE.md#102--responsibilities-table--criome--forge--arca-d)
+("criome holds the key") says criome owns it; helm just creates the
+directory.
+
+**Q9 — Watch mode.** Should `helm watch on` (file-system watcher that
+emits "rebuild needed for X" log lines but doesn't do the rebuild) be
+in scope, or out? It costs a small inotify-driven actor. Useful in
+dev; never in production. I lean "small enough to include from day
+one." Yes?
+
+**Q11 — Seed contents and binds.** The sketch in §4.2.4 uses `@name`
+binds in assertion positions so later Asserts can reference earlier
+ones. nexus's grammar today defines `@x` for *query* binds — I'm not
+certain assertion-position binds are wired. Three options:
+
+- (a) extend nexus to bind on Assert (one parser change; small but
+  load-bearing).
+- (b) author `genesis.nexus` so each record references the previous by
+  the canonical slot range — the genesis seed reserves slots
+  `[0, 1024)` per [criome ARCH §10](../repos/criome/ARCHITECTURE.md#10--rules)
+  ("Bootstrap rung by rung"), so we can hard-code `Slot(1)` etc. in
+  the seed file.
+- (b) is a workable shape today; (a) is the long-term cleaner shape.
+- (c) two-pass: first pass asserts every record without cross-refs;
+  second pass queries the just-asserted records by `name` to learn
+  their slots, then asserts the Edges. Ugly and fragile.
+
+I'd default to (b) for the first seed (small, deterministic, no
+parser work) and revisit (a) when we want richer seeds.
+
+What's the right shape for the seed file's content itself? The chain
+in §4.2.4 (Graph + 3 Nodes + 2 Edges + Principal) is one option. Better
+ideas welcome — this is the user's first impression of mentci every
+time they `mentci up` against an empty sema, so what shows up matters.
+
+**Q12 — Control protocol shape.** I've assumed an rkyv-framed
+`ControlMessage` enum on a UDS at
+`${run_dir}/supervisor.sock`. The alternative is signals (SIGUSR1
+= reload, SIGUSR2 = swap-something-somewhere) which are simpler but
+cap the protocol at "one bit per signal." rkyv-on-UDS is consistent
+with the rest of the workspace; it's the answer I'd default to.
+Confirm?
+
+---
+
+*End report 114.*
