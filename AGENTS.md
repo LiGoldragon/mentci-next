@@ -83,6 +83,16 @@ Small reports are fine — the report doesn't have to be large. Acknowledgements
 
 **Use relative paths in reports.** When a report references files in sibling repos, link via [`../repos/<name>/...`](../repos/) (the workspace symlinks), not via GitHub URLs. The author reads in Codium and clicks links to open files locally; GitHub URLs break that flow. Absolute paths to `~/git/` also don't open in the editor.
 
+## Components, not monoliths
+
+The workspace is composed of **micro-components** — one capability per crate, per repo, per protocol. **sema** is the database. **criome** is the state-engine around it. **lojix** is the executor (nix, filesystem, deploy). **prism** is the code emitter. **signal** is the wire protocol. **nexus** is the text front-end. Each lives in its own repo with its own `Cargo.toml`, `flake.nix`, and tests; each fits in a single LLM context window; each speaks to its neighbors only through typed protocols.
+
+**Adding a feature defaults to a new crate, not editing an existing one.** The burden of proof is on the contributor (human or agent) who wants to grow a crate. They must justify why the new behavior is part of the *same capability* — not a new one. The default answer is "new crate."
+
+**criome communicates; it never runs.** It does not spawn subprocesses, write files outside sema, invoke external tools, or link code-emission libraries. Effect-bearing work (nix builds, file writes, code emission, deployment) is dispatched as typed verbs to dedicated components. Bundling executor work into criome — or any communicator component — is the failure mode this rule closes.
+
+The full case (historical canon from McIlroy's Unix philosophy through Parnas's information-hiding to Erlang's actor isolation; the catastrophic record of monolith collapse — Twitter, Facebook, Healthcare.gov, government COBOL; the modern LLM-context-window argument) lives in [`repos/tools-documentation/programming/micro-components.md`](repos/tools-documentation/programming/micro-components.md). Read it before pushing back on a "new crate, not new mod" requirement as overhead. The cost of plumbing is minutes; the cost of bundling is months or years of friction no agent and no team will resolve cleanly.
+
 ## Beauty is the criterion
 
 Read [`repos/tools-documentation/programming/beauty.md`](repos/tools-documentation/programming/beauty.md) before pushing back on any rule below as "verbose" or "ceremonial." Beauty is not a luxury — it is the test of correctness. Ugly code is evidence that the underlying problem is unsolved. The full case (philosophical foundation across two millennia + the explicit defense from Hardy / Hoare / Dijkstra / Brooks / Hickey / Torvalds + the catastrophic record of what happens when ugly engineering ships — Therac-25, Ariane 5, Mars Climate Orbiter, Heartbleed, Boeing MCAS) lives in [`repos/tools-documentation/programming/beauty-research.md`](repos/tools-documentation/programming/beauty-research.md).
