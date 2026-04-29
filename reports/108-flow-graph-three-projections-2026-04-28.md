@@ -501,7 +501,7 @@ work per layer:
   `EscalatesTo`); `Subscribe` request stays as M2 work.
 - **`criome`** — `BuildRequest` engine handler (validates +
   forwards to forge); per-kind sema tables (bd
-  mentci-next-7tv); `LojixLink` client module mirroring
+  mentci-next-7tv); `ForgeLink` client module mirroring
   nexus's `CriomeLink`; diagnostic-emission richness; Subscribe
   verb at M2. **criome runs nothing** (§10) — handler validates
   and forwards; forge executes.
