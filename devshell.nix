@@ -15,6 +15,7 @@ let
     "signal-forge"
     "sema"
     "nexus-cli"
+    "signal-derive"
     "prism"
     "arca"
     "lojix-cli"

@@ -29,6 +29,7 @@ For project-wide architecture, read [`criome/ARCHITECTURE.md`](https://github.co
 | `nota` | Spec — data grammar (nota ⊂ nexus). |
 | `nota-codec` | Typed Decoder + Encoder for nota and nexus dialects. Runtime half of the codec stack. |
 | `nota-derive` | Proc-macro derives for nota-codec — NotaRecord, NotaEnum, NotaTransparent, NotaTryTransparent, NexusPattern, NexusVerb. |
+| `signal-derive` | Proc-macro derive for signal record kinds — `#[derive(Schema)]` emits per-kind `KindDescriptor` consts. Sibling to nota-derive; different concern (schema introspection vs text codec) per [tools-documentation/programming/abstractions.md §"The wrong-noun trap"](https://github.com/LiGoldragon/tools-documentation/blob/main/programming/abstractions.md). |
 | `nexus` | The nexus language — grammar spec under `spec/` + translator daemon (text ↔ signal). |
 | `signal` | Binary language — wire envelope + IR + record kinds. The workspace's typed wire protocol; spoken on every leg. |
 | `signal-forge` | Layered protocol crate atop signal. Carries the criome ↔ forge wire (Build, Deploy, store-entry operations). Skeleton-as-design. |

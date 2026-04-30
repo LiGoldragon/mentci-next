@@ -12,6 +12,7 @@
     { "name": "nota", "path": "/home/li/git/nota" },
     { "name": "nota-codec", "path": "/home/li/git/nota-codec" },
     { "name": "nota-derive", "path": "/home/li/git/nota-derive" },
+    { "name": "signal-derive", "path": "/home/li/git/signal-derive" },
     { "name": "horizon-rs", "path": "/home/li/git/horizon-rs" },
     { "name": "prism", "path": "/home/li/git/prism" },
     { "name": "sema", "path": "/home/li/git/sema" },
