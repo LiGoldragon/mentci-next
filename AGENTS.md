@@ -307,39 +307,18 @@ How to apply:
 - Especially load-bearing when the next step is committing, pushing, or spawning an agent that consumes the written file.
 - When a `Write` fails on the must-Read-first guard, do the Read then redo the Write before continuing.
 
-## Commit message style — S-expression
+## Commit message style
 
-Commit messages across all repos under `~/git/` follow a single nested-parenthesis S-expression style.
+Single line. Short. Lead with the repo name, then a short verb + scope. Optionally one short clause naming the change. No nested parens, no em-dashes, no Li-quote markers, no enumerated bullets. Detail belongs in the diff and the report, not the commit message.
 
-**Shape:**
-- Single line. No blank-line body. Everything fits in the subject.
-- First token = repo name (lowercase, as it appears in the filesystem).
-- Nested parens group scope → subsystem → notes.
-- `[...]` enumerates discrete bullets within a scope.
-- `—` (em dash, not `--` or `-`) introduces a rationale or explanation.
-- Compound commits wrap the whole thing in an outer pair of parens; simple commits skip the outer pair.
-- `((double parens))` mark direct quotes from Li in the message.
+Examples:
 
-**Templates:**
+- `signal Slot<T> migration`
+- `mentci report add 119`
+- `criome reader for typed slots`
+- `mentci AGENTS commit-style shortened`
 
-Simple (one concern):
-```
-(<repo> <short verb-or-label>) (<what changed> — <why>)
-```
-
-Compound (multiple concerns):
-```
-((<repo> <header>) (<scope-A> [<note>] [<note>]) (<scope-B> [<note> — <why>]))
-```
-
-**Examples:**
-- `(signal edit) (diagnostic.rs + handshake.rs cleanup pass per Li 2026-04-28 ((free functions are incorrectly specified verbs))) (diagnostic.rs — added Diagnostic::error inherent constructor) (handshake.rs — renamed CriomedInstance → CriomeDaemonInstance per the daemon-suffix convention)`
-- `(criome edit) (src/daemon.rs + src/main.rs — dropped inherent impl Daemon::start per the new §No ZST method holders rule per Li 2026-04-28)`
-- `((mentci edit) (AGENTS.md — added §Style docs are patterns not snapshots above §Adding new docs per Li 2026-04-28 ((links like this dont belong there))) (encodes the rule positively + names the failure mode))`
-
-**Common scope labels:** `add`, `edit`, `cull`, `del`, `fix`, `init`, `rename`, `audit`, `arch edit`, `cleanup`, `impl`, `rewrite`.
-
-The parens do the grouping; em-dashes distinguish explanation from enumeration. Keep it on one line even if long — `jj commit -m '<msg>'` takes arbitrarily long single-line messages. Use double quotes around the message when it contains apostrophes (single quotes terminate the shell string).
+If a single change touches multiple repos, each repo gets its own short commit. Don't roll them into one long compound message.
 
 ## Tooling
 

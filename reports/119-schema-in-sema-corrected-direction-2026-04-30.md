@@ -275,14 +275,39 @@ for two different consumers:
    │   match-on-variant code         │               │             │                             │
    └─────────────────────────────────┘               │             └─────────────────────────────┘
                                                      │
-   How nexus "stores" variant strings today          │
-   ───────────────────────────────────────           │
-   It doesn't, at runtime. The strings appear        │
-   in nexus TEXT (e.g. `Flow` in `(Edge … Flow)`).   │
-   The wire form stores an integer tag chosen by     │
-   the NotaEnum derive. The mapping between          │
-   them lives in the codec's compile-time            │
-   generated code — never persisted.                 │
+   How nexus actually stores variant names today     │
+   ─────────────────────────────────────────────     │
+   Looked at [nota-derive/src/nota_enum.rs](         │
+   ../repos/nota-derive/src/nota_enum.rs):           │
+                                                     │
+   • Encode: the NotaEnum derive emits a match       │
+     where each variant arm calls                    │
+     encoder.write_pascal_identifier("Flow") —       │
+     the literal variant ident as a PascalCase       │
+     token in the nexus text. So in `(Edge from      │
+     to Flow)` the bytes for `Flow` ARE the text     │
+     `Flow`. Nexus is text; the variant name IS      │
+     what gets written.                              │
+                                                     │
+   • Decode: the derive emits the inverse match —    │
+     `decoder.read_pascal_identifier()` returns      │
+     the string, and a `match identifier.as_str()`   │
+     dispatches "Flow" → `Self::Flow`, etc.          │
+     Unknown identifiers return                      │
+     `Error::UnknownVariant { enum_name, got }`.     │
+                                                     │
+   So variant names *in nexus text* are stored       │
+   literally — they ARE the text. The mapping        │
+   between identifier-string and enum-variant lives  │
+   in the codec's compile-time generated match       │
+   arms — never persisted, never queryable at         │
+   runtime.                                          │
+                                                     │
+   (rkyv is a separate wire — binary, with           │
+   discriminant integers — used for the              │
+   criome ↔ nexus-daemon UDS leg. The text leg       │
+   uses names; the binary leg uses integers. Same    │
+   compile-time-generated mapping serves both.)      │
                                                      │
                                           one source of truth
 ```
