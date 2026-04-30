@@ -84,6 +84,18 @@ The choice is made by reading each report against the author's intent — no mec
 
 The cap is **soft** in that it triggers a rollover pass, not an instant rejection; it is **firm** in that the pass must run before the next new report lands. The 2026-04-28 cleanup left `reports/` empty — every active report had been absorbed into `tools-documentation/` topic files, per-repo `ARCHITECTURE.md`s, or code, and the rest were deleted. Default to deletion; extract only when the rationale has no other home.
 
+## No stop-gaps — INTENTION applied
+
+[`INTENTION.md`](INTENTION.md) explicitly rejects "minimum viable," "ship fast," "iterate later," and "time to market" as design-shaping framings. **The right shape now is worth more than a wrong shape sooner; unbuilding a wrong shape costs more than the speed it bought.**
+
+This rules out a specific kind of agent suggestion: *"ship X as a stop-gap; we'll replace it with Y when Y lands."* That suggestion is the failure mode INTENTION names directly — it ships a known-wrong shape and accepts the cost of unbuilding it later in exchange for an immediate appearance of progress. Both the wrong shape AND the unbuild cost survive. The "speed" it bought is illusory.
+
+**The recognition heuristic.** When you find yourself proposing two paths where one is "small / hand-written / quick" and the other is "the durable shape," that pairing IS the antipattern. The durable shape is the answer; the small/quick path is what to *not* propose. If the durable shape isn't ready yet, the work that's gated by it waits — that's a feature of the system, not a bug to route around.
+
+**Worked example.** A hand-written `CompiledSchema` impl in `mentci-lib` (matching every signal record kind by name in a giant `match`) was proposed as a "stop-gap to unblock the workbench today, replaced when `signal-derive` lands." That proposal is wrong: the right shape is `signal-derive`. The constructor flow's kind palette waits on that crate. Building the stop-gap means writing code that gets thrown away, plus carrying its bugs and divergences from `signal-derive`'s eventual semantics in the meantime. **What looks like progress is regression** the moment you measure against INTENTION's "right shape now."
+
+When this rule conflicts with a deadline pressure, the deadline pressure is wrong, not the rule (per INTENTION §"What we are not"). When this rule conflicts with another rule, INTENTION wins (per INTENTION §"The relationship with rules").
+
 ## Design reports — visuals, not code
 
 Reports in [`reports/`](reports/) explain, propose, analyse, or summarise. Their medium is **prose + visuals** — ASCII diagrams, swimlanes, flowcharts, tables, dependency graphs. Implementation code (Rust `impl` blocks, function bodies, struct definitions with methods, full Nix derivations) belongs in skeleton code in the relevant repo, not in a report.

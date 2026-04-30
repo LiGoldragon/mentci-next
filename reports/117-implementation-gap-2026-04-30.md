@@ -152,37 +152,27 @@ read it because the on-disk bytes are unchanged.
 ### 2.2 The CompiledSchema implementation
 
 mentci-lib/src/schema.rs has the trait + a `CompiledSchema` ZST
-struct + `todo!()` bodies. Two paths to fill it in:
+struct + `todo!()` bodies. The answer is **signal-derive**, the
+durable shape per [reports/115](115-schema-derive-design-2026-04-30.md):
 
 ```
-   ┌── path A — hand-written impl, ship today ────────────────────┐
-   │                                                                │
-   │  CompiledSchema::kinds() returns hard-coded vec of all 19      │
-   │  CANON record kinds                                            │
-   │  CompiledSchema::fields_of(name) — match on name, return       │
-   │  hand-curated FieldDesc list per kind                          │
-   │                                                                │
-   │  cost: ~150 lines of dispatch; will go stale if the kind list  │
-   │  changes; brittleness exactly proportional to how often signal │
-   │  records are edited                                            │
-   └────────────────────────────────────────────────────────────────┘
-
-   ┌── path B — signal-derive emits the catalog ────────────────-─┐
-   │                                                               │
-   │  every signal record kind gets #[derive(Schema)]              │
-   │  signal exposes pub const ALL_KINDS: &[KindDescriptor]        │
-   │  CompiledSchema walks ALL_KINDS                                │
-   │                                                               │
-   │  cost: a new crate (signal-derive) + the derive macro; no     │
-   │  per-kind dispatch in mentci-lib; updates automatically when  │
-   │  signal grows                                                  │
-   └────────────────────────────────────────────────────────────────┘
+   every signal record kind gets #[derive(Schema)]
+       │
+       ▼
+   signal exposes pub const ALL_KINDS: &[KindDescriptor]
+       │
+       ▼
+   mentci-lib's CompiledSchema impl walks ALL_KINDS
+       │
+       ▼
+   constructor flow surfaces real per-kind palettes
 ```
 
-Path A unblocks the constructor flow's kind picker today. Path B
-is the durable shape per [reports/115](115-schema-derive-design-2026-04-30.md).
-The two compose: ship A as a stop-gap; B replaces it without
-breaking the trait contract.
+Until signal-derive lands, the constructor flow's kind palette
+stays on its hardcoded `["Node"]` placeholder. The flow that
+needs it (drag-new-box / picker-narrowing) waits. Per
+[`AGENTS.md` §"No stop-gaps"](../AGENTS.md): the durable shape
+is the answer; a hand-written stop-gap is not.
 
 ### 2.3 The user-identity migration in mentci-egui
 
@@ -261,35 +251,7 @@ sit behind those verbs; the rest can land anytime.
 NewEdge is an honest oversight — the data is on `NewEdgeFlow`
 already; the commit body is a few lines.
 
-### 2.6 sema gains store_at_slot for genesis
-
-The seed in [reports/116](116-genesis-seed-as-design-graph-2026-04-30.md)
-expects records at fixed slot values within the reserved range
-`[0, 1024)`. sema today only has `store(bytes) -> Slot`, which
-auto-allocates from the persisted counter (which starts at 1024
-on first open per `SEED_RANGE_END`).
-
-To put the design Graph at slot 1, the design Nodes at 16..63,
-the design Edges at 64..255, sema needs:
-
-```
-   sema::Sema
-     existing:  store(bytes)             → next-slot-from-counter
-     new:       store_at_slot(slot, bytes)
-                  → validates slot is in [0, SEED_RANGE_END)
-                  → errors if slot already occupied
-                  → does NOT bump the counter (counter stays at 1024)
-                  → only callable during genesis (criome ARCH §10
-                     "Bootstrap rung by rung" — boot phase)
-```
-
-Small change. Pairs with a new signal verb or a criome-internal
-"genesis-mode" flag that gates whether `store_at_slot` is callable.
-Likely shape: criome accepts a `SeedAssert { slot, op }` private
-verb during boot, refuses it after sema's record count crosses
-some threshold or after a "genesis closed" flag is set.
-
-### 2.7 criome's Subscribe push throttling
+### 2.6 criome's Subscribe push throttling
 
 The current implementation (criome/src/engine.rs:93-101) re-runs
 **every** subscription's full query after **every** Assert and
@@ -332,59 +294,10 @@ bandwidth cost gets visible. Worth flagging now; not blocking on.
 
 ## 4 · The biggest unaddressed issues
 
-Five things, in priority order. Each blocks the engine running
+Four things, in priority order. Each blocks the engine running
 end-to-end as the design now says it should.
 
-### 4.1 The seed-pipeline has a sema gap
-
-```
-   the design says (reports/114 §4.2 + 116):
-     • process-manager pipes genesis.nexus through nexus-cli on
-       first run, gated by an empty-sema check
-     • genesis records land at fixed slots in [0, 1024)
-     • slot 1 = the design Graph; slots 16..63 = component Nodes;
-       slots 64..255 = architectural Edges
-
-   the code says:
-     • sema only auto-allocates slots starting at 1024 (SEED_RANGE_END)
-     • there is no API to write a record at a specific reserved slot
-     • therefore the seed pipeline cannot put records where the
-       design puts them
-```
-
-Four ways to close the gap:
-
-```
-   ┌── A. add sema.store_at_slot ─────────────────────────────────┐
-   │  small sema addition. criome gains a SeedAssert internal     │
-   │  verb (or a "genesis mode" flag). Cleanest match to design.  │
-   └─────────────────────────────────────────────────────────────-┘
-   ┌── B. accept that genesis records live at 1024+ ──────────────┐
-   │  no sema change. genesis.nexus uses literal slots 1024,      │
-   │  1025, ... — references between records work because the     │
-   │  load order is deterministic. Reserved range [0, 1024)       │
-   │  becomes vestigial — cost: a documented contradiction with    │
-   │  criome ARCH §10.                                            │
-   └─────────────────────────────────────────────────────────────-┘
-   ┌── C. two-pass seed (assert without refs; then assert refs) ──┐
-   │  no sema or signal change. genesis.nexus has Phase 1 (Nodes)  │
-   │  and Phase 2 (Edges); between them, query for Nodes by name   │
-   │  to learn slots. Ugly + fragile (114 §10.1 Q11 row's option   │
-   │  c).                                                          │
-   └─────────────────────────────────────────────────────────────-┘
-   ┌── D. nexus bind-on-Assert (long-term) ───────────────────────┐
-   │  parser gains @name binds in assertion positions. genesis.   │
-   │  nexus uses (Assert (Node "criome") @criome) etc. Long-term   │
-   │  cleanest; requires nexus-grammar work.                      │
-   └─────────────────────────────────────────────────────────────-┘
-```
-
-A is the matching answer to the design. B is the lazy answer that
-drifts the canon. C is a bear trap. D is the long-term answer.
-
-**Question for Li in §6 Q1.**
-
-### 4.2 process-manager doesn't exist
+### 4.1 process-manager doesn't exist
 
 The first-cut scope is in [reports/114 §10.3](114-mentci-stack-supervisor-draft-2026-04-30.md#103--first-cut-scope).
 Without it, "the engine running" requires manual coordination of
@@ -393,10 +306,18 @@ mentci-egui). The seed pipeline doesn't run. The directory layout
 (sockets / state / keys) is improvised per agent.
 
 The crate's first cut is small: read a config, fork some
-processes, wait, restart on crash. Beauty discipline says don't
-ship complexity (no swap, no watch mode); ship the clean spine.
+processes, wait, restart on crash, run the seed pipeline on an
+empty sema. Beauty discipline says don't ship complexity (no
+swap, no watch mode); ship the clean spine.
 
-### 4.3 The Slot<T> migration
+The seed pipeline itself becomes trivial after the slot-
+reservation removal: `process-manager` checks if sema has any
+records via `Query(Graph wildcard)`, and if empty, pipes the
+contents of `genesis.nexus` through `nexus-cli`. Records get slots
+0, 1, 2, ... in `genesis.nexus` order — no special sema API
+needed.
+
+### 4.2 The Slot<T> migration
 
 This is large but mechanical. Its absence means signal-derive is
 held up too — the macro can read `T` from `Slot<T>` mechanically;
@@ -406,7 +327,7 @@ annotation hack the workspace has rejected.
 Order matters: phantom-type Slot first; then signal-derive can
 land cleanly; then mentci-lib's CompiledSchema gets real palettes.
 
-### 4.4 Per-user identity is unimplemented
+### 4.3 Per-user identity is unimplemented
 
 mentci-egui's `Slot::from(0u64)` is a developer-time shortcut.
 Every Frame mentci-lib emits has `principal_hint: Some(Slot(0))`
@@ -414,30 +335,53 @@ and `auth_proof: Some(AuthProof::SingleOperator)`. This works
 because criome accepts `SingleOperator` (peer-cred at the OS
 layer) and never validates the hint.
 
-The shape that matches the design ([reports/114 §10.1 Q8](114-mentci-stack-supervisor-draft-2026-04-30.md#101--resolved-by-the-principles)):
+The right shape — per Li 2026-04-30 — is **mentci owns key
+management**. mentci has an interface (in mentci-egui's UI;
+optionally a `mentci-keygen` one-shot for non-GUI flows) for
+creating + listing + selecting + retiring user keys. The
+private bytes live somewhere mentci controls.
+
+The further direction (Li, "not a hard design decision, just an
+idea"): a separate **key daemon** that holds the private bytes
+in protected memory and serves signature requests over UDS. Other
+processes (mentci-egui, mentci-lib's frame builder) ask the key
+daemon to sign; private bytes never leave the daemon. This pairs
+naturally with hardware secure enclaves once those are usable
+outside corporate-guarded contexts:
 
 ```
-   on mentci-egui startup:
-     1. ensure ${XDG_DATA_HOME}/mentci/principal.bls exists
-        if absent: mint BLS keypair, write public half to a
-          freshly-asserted Principal record in sema, write
-          private half to the .bls file with chmod 0600
-        if present: load private half + look up the matching
-          Principal record by some identity hint
-     2. WorkbenchState::new is called with the loaded
-        Slot<Principal> (no longer hard-coded 0)
-     3. mentci-lib's frame builder signs every Frame's
-        auth_proof with the BLS private key; signer = the
-        Principal slot
-     4. criome's handshake validation eventually checks the
-        signature against the Principal's public key
+   today                      tomorrow (key daemon)
+   ─────                      ──────────────────────
+
+   mentci-egui                mentci-egui
+       │                          │
+       │ loads .bls file           │ asks for signature
+       │ signs Frame inline        ▼
+       │                      ┌──────────────────┐
+       │                      │   key-daemon     │
+       │                      │                  │
+       │                      │  • private bytes │
+       │                      │    in protected  │
+       │                      │    memory / HW   │
+       │                      │    enclave       │
+       │                      │  • returns BLS   │
+       │                      │    signature     │
+       │                      │  • signed-Frame  │
+       │                      │    flows on      │
+       │                      └──────────────────┘
+                                       │
+                                       ▼
+                                  mentci-egui
+                                  attaches sig,
+                                  sends Frame
 ```
 
 For the first-cut "engine working" milestone, the SingleOperator
-shortcut is fine. But the design now names this gap explicitly
-and the path forward shouldn't lose it.
+shortcut is fine. The mentci key-management interface lands as
+the user-identity slice does; the key daemon lands when the
+private-bytes-protection requirement bites.
 
-### 4.5 Subscribe push has a real correctness foot-gun
+### 4.4 Subscribe push has a real correctness foot-gun (lower priority)
 
 Less acute than the others, but worth naming now: every
 `Reply::Records` reply from criome arrives at mentci-lib's driver
@@ -473,83 +417,87 @@ doesn't get accidentally regressed.
 ```
    ┌─────────────────────────────────────────────────────────────────┐
    │                                                                 │
-   │  step 1   sema.store_at_slot lands     §4.1 path A              │
-   │           + criome's SeedAssert verb                            │
-   │                                                                 │
-   │  step 2   process-manager skeleton:    §4.2                     │
+   │  step 1   process-manager skeleton:    §4.1                     │
    │           config + spawn + readiness                            │
    │           probes + tear-down                                    │
    │                                                                 │
-   │  step 3   genesis.nexus written        per reports/116          │
-   │           in mentci/                                             │
+   │  step 2   genesis.nexus written        per reports/116          │
+   │           in mentci/                                            │
    │                                                                 │
-   │  step 4   process-manager seed step    §4.1 + the canonical     │
-   │           wires up: empty-sema check    flow from 114 §4.2       │
-   │           → pipe genesis.nexus                                   │
-   │           through nexus-cli                                      │
+   │  step 3   process-manager seed step:   §4.1 + 114 §4.2          │
+   │           empty-sema check → pipe                                │
+   │           genesis.nexus through                                  │
+   │           nexus-cli                                              │
    │                                                                 │
-   │  step 5   `nix run .#up` spawns the    end-to-end first         │
+   │  step 4   `nix run .#up` spawns the    end-to-end first         │
    │           full stack; mentci-egui      working state            │
    │           paints the design graph                                │
    │                                                                 │
    ├──── above this line: the engine is working ────────────────────┤
    │                                                                 │
-   │  step 6   Slot<T> migration            §4.3 (mechanical)        │
+   │  step 5   Slot<T> migration            §4.2 (mechanical)        │
    │                                                                 │
-   │  step 7   signal-derive crate +        §4.3 (after Slot<T>)     │
+   │  step 6   signal-derive crate +        §4.2 (after Slot<T>)     │
    │           mentci-lib's CompiledSchema                            │
    │           reads ALL_KINDS                                       │
    │                                                                 │
-   │  step 8   NewEdge constructor commit   §2.5 (NewEdge only;       │
+   │  step 7   NewEdge constructor commit   §2.5 (NewEdge only;       │
    │           body in mentci-lib            Rename/Retract/Batch     │
    │                                          wait on M1)            │
    │                                                                 │
-   │  step 9   mentci-egui handlers for     §2.4 (the gestures        │
+   │  step 8   mentci-egui handlers for     §2.4 (the gestures        │
    │           drag-wire / move-node / pan   not gated by M1)        │
    │           / zoom                                                │
    │                                                                 │
-   │  step 10  per-user identity            §4.4 (BLS keypair         │
-   │           (SingleOperator → BLS)        ceremony)               │
+   │  step 9   per-user identity            §4.3 (mentci's key-       │
+   │           (SingleOperator → mentci-     management interface;   │
+   │            held BLS keypair)            key daemon later)       │
    │                                                                 │
    ├──── below this line: M1 work ─────────────────────────────────-┤
    │                                                                 │
-   │  step 11  criome Mutate / Retract /    unblocks Rename +        │
+   │  step 10  criome Mutate / Retract /    unblocks Rename +        │
    │           AtomicBatch                  Retract + Batch flows    │
    │                                                                 │
-   │  step 12  Subscribe push delta /        §4.5 (the foot-gun)     │
+   │  step 11  Subscribe push delta /        §4.4 (the foot-gun)     │
    │           sub-id tracking in the driver                         │
    │                                                                 │
    └─────────────────────────────────────────────────────────────────┘
 ```
 
-Steps 1 → 5 land "engine working end-to-end with the design seed
+Steps 1 → 4 land "engine working end-to-end with the design seed
 visible." That's the milestone testing should target per Li
 2026-04-30 ("let's start testing a working engine first").
 Everything below is incremental.
 
 ---
 
-## 6 · Open shapes for Li
+## 6 · Open shapes — resolved during this round
 
-**Q1 — sema slot-reservation enforcement (§4.1).** Path A
-(`sema.store_at_slot` + criome `SeedAssert`)? Or path B (genesis
-records live at 1024+)? Path A matches criome ARCH §10's
-"reserved [0, 1024)" canon; path B is cheaper but drifts the
-canon.
+**Q1 — sema slot reservation.** Removed. Per Li 2026-04-30: the
+`SEED_RANGE_END = 1024` reservation was an agent's reach for
+"nice structure" that didn't make anything more beautiful,
+elegant, or correct. Beauty rule applied: removed it. sema's
+counter now starts at 0; genesis records get slots 0, 1, 2, ...
+in `genesis.nexus` order; no special sema API needed; the
+seed-pipeline gap dissolves.
 
-**Q2 — Path A or path B for CompiledSchema in mentci-lib?**
-[reports/115](115-schema-derive-design-2026-04-30.md) chose
-signal-derive (the durable answer). But waiting for signal-derive
-gates the constructor flow's real kind palette. A small
-hand-written CompiledSchema impl would unblock the workbench
-today (§2.2 path A) and get replaced when signal-derive lands.
-Stop-gap acceptable, or wait for the durable shape?
+**Q2 — CompiledSchema stop-gap.** Withdrawn. Per Li 2026-04-30
++ [`AGENTS.md` §"No stop-gaps"](../AGENTS.md): proposing a
+hand-written stop-gap to replace later violates INTENTION.md
+("Not for 'iterate later'"). The right shape is signal-derive;
+the constructor flow's real kind palette waits on that crate.
+Building the stop-gap means writing throwaway code — what looks
+like progress is regression measured against INTENTION's "right
+shape now."
 
-**Q3 — Where does the per-user BLS keypair get minted?**
-mentci-egui's bootstrap (inline; less code) or a dedicated
-mentci-keygen one-shot (per the AGENTS.md `<crate>-<verb>`
-pattern; cleaner separation)? Either works; calling out the
-choice.
+**Q3 — Per-user BLS keypair.** Mentci owns key management. An
+interface in mentci (UI in mentci-egui; optionally a
+`mentci-keygen` one-shot) for creating, listing, selecting, and
+retiring user keys. The further direction — a separate key
+daemon holding private bytes in protected memory / HW enclave,
+serving signature requests over UDS — is sketched in §4.3 as the
+shape that pairs with secure-hardware-enclave integration when
+that surface becomes usable.
 
 ---
 

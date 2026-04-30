@@ -174,31 +174,41 @@ in the current closed enum, plus naming questions.
 
 ---
 
-## 5 · The slot reservation
+## 5 · Slot ordering
 
-Per [criome ARCH §10 "Bootstrap rung by rung"](../repos/criome/ARCHITECTURE.md#10--rules)
-the genesis seed reserves slots `[0, 1024)`. A first-pass
-allocation:
+sema hands out slots monotonically — the counter starts at 0 on
+first open and the first assert gets slot 0, the second gets 1,
+and so on. genesis records get slots in `genesis.nexus` order;
+nothing is reserved.
+
+The seed is therefore authored carefully so that records are
+asserted in the order their slots are referenced:
 
 ```
-   Slot range     Purpose
-   ─────────────────────────────────────────────────────
-   0              the default Principal ("operator")
-   1              the design Graph ("Criome")
-   16 .. 63       component Nodes (≤ 48; current count: 19)
-   64 .. 255      architectural Edges (≤ 192; current count: ~28)
-   256 .. 1023    headroom for the design's growth before
-                  the reserved range is exhausted; subsequent
-                  user-asserted records start at 1024
+   order              slot   what
+   ──────────────────────────────────────────────────────────────
+   1st assert         0      default Principal ("operator")
+   2nd assert         1      Node "sema"
+   3rd assert         2      Node "criome"
+   …                  …      remaining component Nodes
+   after Nodes        N..M   architectural Edges (each Edge
+                              references its from/to Nodes by the
+                              slots they were just assigned)
+   last               M+1    the design Graph ("Criome") — listing
+                              the just-assigned Node + Edge slots
+                              in its nodes/edges fields
 ```
 
-Lots of headroom. The design can roughly quintuple in size before
-it bumps the range.
+The Graph asserts last because its `nodes` and `edges` fields
+hold the slots of records asserted before it. Edges are fine
+mid-sequence because they only reference the Nodes already
+asserted.
 
-Hard-coded slot values in `genesis.nexus` let Edges reference Nodes
-by slot without needing bind-on-Assert in the nexus parser. (See
-the bind-on-Assert thread in [reports/114 §10.1](114-mentci-stack-supervisor-draft-2026-04-30.md#101--resolved-by-the-principles)
-Q11 row — option (b) — which this seed exercises.)
+(An earlier draft of this report had a slot-reservation table
+that placed records at fixed positions in `[0, 1024)`. Per Li
+2026-04-30: the reservation didn't make anything more beautiful,
+elegant, or correct, so it was removed from sema. Genesis records
+are simply the records asserted first; that's the whole story.)
 
 ---
 

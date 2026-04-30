@@ -861,22 +861,25 @@ the rest by Li's calls during this session.
        │ slots from day one; rejects unknown     │   (criome ARCH §13.6)
        │ daemons                                  │
    ────┼──────────────────────────────────────────┼─────────────────────────
-   Q8  │ TWO keys, two owners. process-manager   │ criome ARCH §10.2
-       │ creates the directories and ensures      │   (criome owns
-       │ permissions; neither key is its to       │   the capability-
-       │ mint or hold:                            │   signing key);
-       │  • criome's capability-signing key —    │ signal/src/auth.rs
-       │    signs tokens forge/arca verify.      │   §AuthProof::
-       │    Lives at ${XDG_DATA_HOME}/mentci/    │   BlsSignature
-       │    criome/signing.bls (chmod 0600);     │   {signer:Slot}
-       │    criome mints on first run.           │   names the per-
-       │  • the user's per-Principal BLS key —   │   Principal signing
-       │    each user signs every Frame's        │   path
-       │    auth_proof with this. Lives at       │
-       │    ${XDG_DATA_HOME}/mentci/principal.   │
-       │    bls (chmod 0600); mentci-egui's      │
-       │    bootstrap (or a small                │
-       │    mentci-keygen one-shot) mints.       │
+   Q8  │ TWO keys, two domains:                  │ criome ARCH §10.2
+       │  • criome's capability-signing key —    │   (criome owns
+       │    signs tokens forge/arca verify.      │   the capability-
+       │    Criome's domain — criome mints,      │   signing key);
+       │    criome holds, criome rotates.        │ signal/src/auth.rs
+       │  • the user's BLS key — signs every     │   §AuthProof::
+       │    Frame's auth_proof. Mentci's         │   BlsSignature
+       │    domain — mentci has the interface     │   {signer:Slot}
+       │    for creating, listing, selecting,    │ Li 2026-04-30:
+       │    and retiring user keys.              │   "mentci should
+       │ Future direction (not blocking): a      │   have an interface
+       │ separate key daemon holds the user's    │   to create keys
+       │ private bytes in protected memory /     │   and manage them"
+       │ HW enclave; mentci-egui asks the        │
+       │ daemon to sign Frames (private bytes    │
+       │ never leave it). Pairs with HW-enclave  │
+       │ integration when usable.                │
+       │ process-manager just ensures the         │
+       │ directories exist with right perms.     │
    ────┼──────────────────────────────────────────┼─────────────────────────
    Q9  │ ship `process-manager watch on` from day one as    │ push-not-pull.md:
        │ a small inotify/kqueue-driven actor;    │   watcher must be
