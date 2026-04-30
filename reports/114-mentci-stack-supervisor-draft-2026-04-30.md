@@ -196,69 +196,65 @@ Per the criome-runs-nothing rule applied analogically:
   ([criome/ARCHITECTURE.md §8](../repos/criome/ARCHITECTURE.md)), not
   in helm.
 
-### 2.3 Skeleton types · ([tools-documentation/rust/style.md](../repos/tools-documentation/rust/style.md))
+### 2.3 The shape of helm's types
 
-```rust
-// helm/src/config.rs  — what the nota config deserialises into
+The nota config deserialises into a closed `Config` record;
+helm's run loop holds a `Supervisor` whose methods own the
+verbs. Field-level shape:
 
-pub struct Config {
-    pub run_dir: PathBuf,                 // sockets live here
-    pub data_dir: PathBuf,                // sema.redb, etc.
-    pub arca_root: PathBuf,               // ~/.arca
-    pub daemons: Vec<DaemonSpec>,         // order = launch order
-    pub frontend: Option<DaemonSpec>,     // mentci-egui (last to launch,
-                                          //  first to tear down)
-}
+```
+   Config
+   ───────────────────────────────────────────────────────────────
+   run_dir       : path                ← where sockets live
+   data_dir      : path                ← where sema.redb lives
+   arca_root     : path                ← ~/.arca
+   daemons       : list of DaemonSpec  ← order = launch order
+   frontend      : optional DaemonSpec ← mentci-egui — launched
+                                          last, torn down first
 
-pub struct DaemonSpec {
-    pub name: DaemonName,                 // newtype: "criome" | "nexus" | …
-    pub binary: PathBuf,                  // nix-store path
-    pub args: Vec<String>,
-    pub env: Vec<EnvAssignment>,          // typed; ${var} expansion
-    pub socket: Option<PathBuf>,          // listener socket if any
-    pub restart_policy: RestartPolicy,
-    pub depends_on: Vec<DaemonName>,      // spawn ordering
-    pub readiness: Readiness,
-}
+   DaemonSpec
+   ───────────────────────────────────────────────────────────────
+   name          : DaemonName          ← typed: criome | nexus | …
+   binary        : path                ← nix-store path
+   args          : list of string
+   env           : list of EnvAssignment  (typed; ${var} expansion)
+   socket        : optional path       ← listener socket if any
+   restart_policy: RestartPolicy       ← Always | OnFailure | Never
+   depends_on    : list of DaemonName  ← spawn ordering
+   readiness     : Readiness
 
-pub enum RestartPolicy { Always, OnFailure, Never }
-
-pub enum Readiness {
-    /// Wait for the listener socket to exist before launching dependents.
-    SocketBound { path: PathBuf, timeout: Duration },
-    /// Wait for a successful signal::Handshake to round-trip.
-    Handshake { socket: PathBuf, timeout: Duration },
-    /// No probe; mark ready immediately.
-    Immediate,
-}
+   Readiness — closed enum, three shapes:
+     SocketBound { path, timeout }     wait for socket file to exist
+     Handshake   { socket, timeout }   wait for signal handshake round-trip
+     Immediate                         mark ready straight away
 ```
 
-```rust
-// helm/src/supervisor.rs  — methods on types, no free functions
+The supervisor is a noun owning the verbs; methods only,
+no free functions:
 
-pub struct Supervisor {
-    config: Config,
-    children: HashMap<DaemonName, Child>,
-    control: ControlSocket,
-}
+```
+   Supervisor
+   ───────────────────────────────────────────────────────────────
+   fields:
+     config   : Config
+     children : map[DaemonName → Child]
+     control  : ControlSocket
 
-impl Supervisor {
-    pub fn new(config: Config) -> Self { … }
-    pub async fn launch_all(&mut self) -> Result<()> { … }
-    pub async fn shutdown_all(&mut self, grace: Duration) -> Result<()> { … }
-    pub async fn swap(&mut self, name: DaemonName,
-                      new_binary: PathBuf) -> Result<()> { … }
-    pub async fn run(&mut self) -> Result<()> { …
-        // tokio::select! over child exits + control socket events +
-        // SIGINT/SIGTERM. Beauty rule: this is the only function that
-        // owns the loop; everything else returns and lets it drive.
-    }
-}
+   methods:
+     new(config)                  →  Supervisor
+     launch_all()                 →  Result<()>
+     shutdown_all(grace)          →  Result<()>
+     swap(name, new_binary_path)  →  Result<()>
+     run()                        →  Result<()>          ← the only
+                                                          function that
+                                                          owns the loop
 ```
 
-This is a sketch. The actual shapes land as skeleton code in the new
-repo before the first commit (per the [criome ARCH §10 "Skeleton-as-design"
-rule](../repos/criome/ARCHITECTURE.md#10--rules)).
+Concrete shapes land as skeleton code in helm's repo before the
+first commit (per [criome ARCH §13.6 "Skeleton-as-design over
+prose-as-design"](../repos/criome/ARCHITECTURE.md#13--update-policy)) —
+the structure here is the *outline*, not a substitute for the
+typed code.
 
 ---
 
@@ -814,119 +810,95 @@ loose collection of edge cases, helm is missing structure.
 
 ---
 
-## 10 · Questions for Li (most important first)
+## 10 · Status of the open questions
 
-These are the answers that shape the design enough that I'd rather
-have them before writing skeleton code than guess.
+Most of the questions below resolve cleanly against principles
+already in the workspace's design canon (per
+[`tools-documentation/programming/`](../repos/tools-documentation/programming/)
++ [criome/ARCHITECTURE.md](../repos/criome/ARCHITECTURE.md)). The
+genuinely open ones — the calls that need a personal preference,
+not a principle — are a much shorter list.
 
-**Q1 — Name.** `helm` is provisional. Other shapes that read as English
-and fit the workspace's noun-naming neighborhood:
+### 10.1 Resolved by the principles
 
-- `helm` — short, "steers the ship," fits criome/forge/arca
-- `kiln` — short, "where firings happen," tool/material like forge
-- `warden` — "watches over"
-- `keeper` — bare, custodial
-- `marshal` — organises, but overlaps with serialisation jargon
+```
+   Q   │ resolution                              │ grounded on
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q2  │ start every CANON daemon (option a):    │ beauty: uniform >
+       │ criome + nexus + mentci-egui today;     │   conditional;
+       │ adds forge + arca slots when those      │ perfect-specificity
+       │ land                                    │   (criome ARCH §2D)
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q3  │ separate OS processes per daemon         │ micro-components.md:
+       │                                          │   one capability,
+       │                                          │   one crate, one
+       │                                          │   binary
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q4  │ per-user persistent under XDG paths:    │ XDG conventions; per-
+       │   sema.redb at ${XDG_DATA_HOME}/mentci/ │   project couples
+       │   sockets at ${XDG_RUNTIME_DIR}/mentci/ │   state to working
+       │   arca at ${HOME}/.arca/                │   directory; ephemeral
+       │ --data-dir as escape hatch              │   loses sema across
+       │                                          │   reboots
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q7  │ helm's parser knows about forge + arca  │ skeleton-as-design
+       │ slots from day one; rejects unknown     │   (criome ARCH §13.6)
+       │ daemons                                  │
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q8  │ criome owns the signing key; helm just  │ criome ARCH §10.2
+       │ creates the directory                    │   responsibilities
+       │   ${XDG_DATA_HOME}/mentci/criome/       │   table — "criome
+       │ where criome's first-run logic mints     │   holds the key"
+       │ the keypair                              │
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q9  │ ship `helm watch on` from day one as    │ push-not-pull.md:
+       │ a small inotify/kqueue-driven actor;    │   watcher must be
+       │ off by default; emits "rebuild needed   │   event-driven, never
+       │ for X" log lines                         │   a poll loop
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q10 │ rkyv-on-UDS with ControlMessage enum,   │ all-rkyv-except-
+   Q12 │ length-prefixed exactly like signal     │   nexus-text rule
+       │                                          │   (criome ARCH §10)
+   ────┼──────────────────────────────────────────┼─────────────────────────
+   Q11 │ first genesis.nexus uses fixed slot     │ criome ARCH §10
+   (in │ values from the genesis-seed reserved   │   "Bootstrap rung by
+   part│ range [0, 1024); bind-on-Assert in       │   rung" reserves the
+   ─)  │ nexus is the long-term shape and lands  │   range; nexus-grammar
+       │ when the parser supports it             │   evolution is the
+       │                                          │   path forward
+```
 
-Or you have a name I haven't considered. Pick one and I'll thread it
-through.
+### 10.2 Genuinely open — the calls that need Li
 
-**Q2 — Scope of `nix run .#up`.** Two interpretations:
+**Q1 — Name.** Provisional: `helm`. Alternates that read as
+English nouns and don't collide with serialisation/marshalling
+jargon: `kiln`, `warden`, `keeper`. This is a ranking, not a
+principle decision; pick one.
 
-- (a) starts every CANON daemon currently in the workspace —
-  criome + nexus + mentci-egui today; criome + nexus + forge + arca
-  + mentci-egui after forge/arca land.
-- (b) starts exactly the daemons mentci-egui needs to function, and
-  forge/arca only when the user explicitly invokes a build.
+**Q5 — Reconnect after intentional swap.** Provisional answer:
+auto-reconnect on a helm-initiated swap (the swap is itself a
+user-initiated state replacement, so auto-reconnect is *aligned*
+with intent), keep the chip-click discipline for crashes (where
+the user did not initiate the disconnect). The seam: helm's swap
+path emits a control message to mentci-egui's driver flagging
+the disconnect as intentional; the driver flips a one-shot
+"auto-reconnect-on-next-disconnect" hint. Confirm this UX shape?
 
-I'd default to (a) — uniform, predictable, and forge/arca sitting idle
-costs almost nothing. Confirm or correct?
+**Q6 — `mentci` as a CLI shim.** Provisional: build it. Per
+the noun-naming discipline, `mentci` as a CLI noun owning the
+verbs `up`/`down`/`reload`/`seed` is the right shape;
+`nix run .#up` is plumbing the noun should hide. The shim adds
+tab completion, uniform error messages, and an obvious entry
+point in `$PATH`. Confirm worth building from day one?
 
-**Q3 — Process model.** Daemons are separate OS processes today and
-the supervisor design assumes that. The alternative is a single
-multi-bin executable with a `--role criome|nexus|...` flag (closer to
-"all the daemons in one nix output"). Separate processes are the
-[micro-components answer](../repos/tools-documentation/programming/micro-components.md);
-single binary saves a few MB of disk. I lean strongly separate; just
-flagging the choice.
-
-**Q4 — Where does state live?**
-
-- `${XDG_DATA_HOME}/mentci/sema.redb` — per-user, persists across reboots,
-  shared between projects. **My default.**
-- `./sema.redb` (current working directory) — per-project, easier to
-  experiment.
-- `${XDG_RUNTIME_DIR}/mentci/sema.redb` — ephemeral, goes away on
-  reboot.
-
-I'd ship per-user-persistent and accept a `--data-dir` override. OK?
-
-**Q5 — Reconnect behaviour on daemon restart.** When helm respawns
-criome after a crash, mentci-egui's driver sees `*Disconnected` and
-the auto-reconnect path is "user clicks the reconnect chip"
-([reports/113 §5.2](113-architecture-deep-map-2026-04-29.md#52--gestures--userevents-what-each-pane-emits-today)).
-Should helm's swap of criome trigger an automatic reconnect on the
-mentci-egui side, or is the chip-click discipline correct (user
-remains in control of when state is replaced)?
-
-**Q6 — `mentci` as a CLI.** I've used `nix run .#up` throughout. The
-ergonomic version is a shim called `mentci` on PATH that dispatches to
-the same flake apps. Do you want the shim from day one (worth the few
-lines of code) or `nix run .#up` is fine until something pushes back?
-
-**Q7 — forge / arca timing.** Should helm's first version anticipate
-forge/arca slots in the config (parser knows about them, rejects
-unknown daemons) or stay strictly current (criome + nexus +
-mentci-egui only, add forge/arca entries when those daemons exist)?
-The first is barely more code and avoids a config schema bump later.
-
-**Q8 — Capability-token bootstrap.** When forge lands, criome signs
-capability tokens; the signing key has to live somewhere. Is helm's
-job to mint the keypair on first run (e.g. into
-`${XDG_DATA_HOME}/mentci/criome.key`) and pass the path as an env
-var, or does criome handle key bootstrap internally? My read of
-[criome ARCH §10.2](../repos/criome/ARCHITECTURE.md#102--responsibilities-table--criome--forge--arca-d)
-("criome holds the key") says criome owns it; helm just creates the
-directory.
-
-**Q9 — Watch mode.** Should `helm watch on` (file-system watcher that
-emits "rebuild needed for X" log lines but doesn't do the rebuild) be
-in scope, or out? It costs a small inotify-driven actor. Useful in
-dev; never in production. I lean "small enough to include from day
-one." Yes?
-
-**Q11 — Seed contents and binds.** The sketch in §4.2.4 uses `@name`
-binds in assertion positions so later Asserts can reference earlier
-ones. nexus's grammar today defines `@x` for *query* binds — I'm not
-certain assertion-position binds are wired. Three options:
-
-- (a) extend nexus to bind on Assert (one parser change; small but
-  load-bearing).
-- (b) author `genesis.nexus` so each record references the previous by
-  the canonical slot range — the genesis seed reserves slots
-  `[0, 1024)` per [criome ARCH §10](../repos/criome/ARCHITECTURE.md#10--rules)
-  ("Bootstrap rung by rung"), so we can hard-code `Slot(1)` etc. in
-  the seed file.
-- (b) is a workable shape today; (a) is the long-term cleaner shape.
-- (c) two-pass: first pass asserts every record without cross-refs;
-  second pass queries the just-asserted records by `name` to learn
-  their slots, then asserts the Edges. Ugly and fragile.
-
-I'd default to (b) for the first seed (small, deterministic, no
-parser work) and revisit (a) when we want richer seeds.
-
-What's the right shape for the seed file's content itself? The chain
-in §4.2.4 (Graph + 3 Nodes + 2 Edges + Principal) is one option. Better
-ideas welcome — this is the user's first impression of mentci every
-time they `mentci up` against an empty sema, so what shows up matters.
-
-**Q12 — Control protocol shape.** I've assumed an rkyv-framed
-`ControlMessage` enum on a UDS at
-`${run_dir}/supervisor.sock`. The alternative is signals (SIGUSR1
-= reload, SIGUSR2 = swap-something-somewhere) which are simpler but
-cap the protocol at "one bit per signal." rkyv-on-UDS is consistent
-with the rest of the workspace; it's the answer I'd default to.
-Confirm?
+**Q11 (the rest) — What to seed.** The chain shape (a small
+hand-crafted Graph + 3 Nodes + 2 Edges + a Principal) is in
+§4.2.4. The actual *names* — whether to reuse the existing
+handshake-test seed ("Echo Pipeline" / "ticks" / "double" /
+"stdout") or pick fresh ones that frame what mentci is — are
+open. This is the user's first impression of mentci on a fresh
+install; what shows up matters more than the implementation
+cost.
 
 ---
 

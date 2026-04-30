@@ -424,31 +424,81 @@ attributes get added field-by-field as each missing piece surfaces.
 
 ## 3 · Where the macro lives
 
-Two options — Li's call:
+A new crate, **`signal-derive`**.
+
+The two crates carry different concerns:
 
 ```
-   ┌──────────────────────────────────┬───────────────────────────────┐
-   │  Option A — extend nota-derive   │  Option B — new signal-derive │
-   ├──────────────────────────────────┼───────────────────────────────┤
-   │  + crate already exists, already │  + perfect-component-isolation│
-   │    sees every record kind        │    schema introspection has   │
-   │  + every record already derives  │    different consumers from   │
-   │    NotaRecord; one more derive   │    text codec (mentci-lib's   │
-   │    next to it is uniform         │    UI vs nexus-daemon)        │
-   │  + faster to ship                │  − new repo + flake + tests   │
-   │                                  │    setup cost                 │
-   │  − couples schema introspection  │                               │
-   │    to the codec crate's release  │                               │
-   │    cadence                       │                               │
-   └──────────────────────────────────┴───────────────────────────────┘
+   ┌──────────────────────────────────┬─────────────────────────────────────┐
+   │  nota-derive                     │  signal-derive                      │
+   ├──────────────────────────────────┼─────────────────────────────────────┤
+   │  concern: text encode/decode     │  concern: schema introspection      │
+   │  consumers: nexus-daemon         │  consumers: mentci-lib's UI;        │
+   │                                  │    later, schema-in-sema bootstrap  │
+   │  emits: NotaRecord / NotaEnum /  │  emits: Schema descriptor + Kind    │
+   │    NexusVerb / NexusPattern /    │    trait per record kind +          │
+   │    NotaTransparent codec impls   │    ALL_KINDS catalogue              │
+   └──────────────────────────────────┴─────────────────────────────────────┘
 ```
 
-My read: **Option A**. nota-derive already owns derives over signal's
-record types; schema introspection is naturally adjacent to "knows the
-shape well enough to encode/decode." The micro-components rule isn't
-fundamentally violated — derives over Rust types are one capability
-("emit metadata about typed records"), nota-derive is the noun for
-that capability.
+Both crates touch the same underlying signal record types, but
+*touching the same types* is not the same as *having the same
+concern*. nota-codec consumes signal records as its input; that
+makes nota-derive *downstream* of signal, not the right noun for
+schema introspection. Schema introspection is signal's concern,
+so it lives in signal-derive — see [`tools-documentation/programming/abstractions.md`](../repos/tools-documentation/programming/abstractions.md) §"The wrong-noun trap."
+
+### 3.1 Sharing logic between proc-macro crates
+
+Proc-macro crates can — and routinely do — depend on regular
+library crates. The pattern: a non-proc-macro library carries the
+shared logic, and each `*-derive` crate is a thin shell that
+delegates. Examples in the wild: `serde_derive_internals`,
+`darling`, `synstructure`. None of these is a proc-macro crate
+itself; they are shared parsers that several derive crates
+import.
+
+```
+   ┌─── signal-types-syn (or similar; non-proc-macro lib) ────┐
+   │                                                          │
+   │   parses signal record-kind type definitions             │
+   │   (struct fields, enum variants, generics, attributes)   │
+   │   into a typed IR that downstream derives walk           │
+   │                                                          │
+   └────────┬─────────────────────────────────────┬───────────┘
+            │ depended on by                      │ depended on by
+            ▼                                     ▼
+   ┌──────────────────┐                  ┌─────────────────────┐
+   │  nota-derive     │                  │  signal-derive      │
+   │  (proc-macro =   │                  │  (proc-macro = true)│
+   │   true)          │                  │                     │
+   │                  │                  │                     │
+   │  emits codec     │                  │  emits Schema       │
+   │  impls           │                  │  descriptors        │
+   └──────────────────┘                  └─────────────────────┘
+```
+
+Whether to factor the shared library out depends on how much
+overlap actually shows up. Two paths:
+
+- **Start with no sharing.** signal-derive opens with its own
+  syn-tree walking, sized to its concern. If nota-derive turns out
+  to need the same walking later, factor the shared library out
+  *then* — the right shape is visible only after both sides exist.
+- **Factor the shared library up-front.** If the duplication is
+  obvious before the second derive lands, write the shared crate
+  first.
+
+Default: start with no sharing. Each derive crate is small; the
+duplication, if it exists, is small enough to refactor cleanly
+once both shapes are visible.
+
+The Rust constraint to be aware of: a proc-macro crate
+(`proc-macro = true`) cannot export non-proc-macro items in a way
+that another proc-macro crate can usefully consume. So
+"signal-derive imports nota-derive directly" is not the right
+shape — it has to be "signal-derive and nota-derive both import
+a shared *non-proc-macro* library."
 
 ---
 
@@ -507,14 +557,15 @@ for the runtime catalog.
 
 ---
 
-## 5 · One question
+## 5 · No open questions
 
-**Q1 — Option A or Option B in §3?** I'd default to A (extend
-nota-derive). Confirm or correct?
-
-(All other choices — the `#[schema(refs = "...")]` attribute, the
-per-field annotation discipline, the staged path to schema-in-sema —
-flow from the §0 picture and don't need answers before skeleton lands.)
+The question previously listed here — "where does the macro live?" —
+is resolved: signal-derive, in its own crate, per the wrong-noun
+trap. The phantom-typed `Slot<T>` resolution in §2.1 removes the
+annotation question. The rest of the design (§1 type→FieldType
+mapping, §2.2 valid-relations table, §2.3 derived-field marker,
+§4 bootstrap path) follows the principles cleanly and lands as
+skeleton code in signal-derive's repo.
 
 ---
 
