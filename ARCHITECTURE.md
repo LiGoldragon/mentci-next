@@ -83,7 +83,7 @@ Per [AGENTS.md](AGENTS.md) and the workspace-wide contract at
    root (matklad pattern). Open the relevant one when working
    inside a specific repo.
 4. Decision history lives in `reports/`. Trim aggressively;
-   delete don't banner.
+   replace cleanly.
 
 ## Status
 

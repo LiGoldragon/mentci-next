@@ -1,6 +1,6 @@
-# mentci
+# workspace
 
-Workspace umbrella + meta-deploy aggregator for the
+Workspace meta-repo + meta-deploy aggregator for the
 criome sema-ecosystem.
 
 Holds the dev shell, design corpus (`reports/`), agent rules
@@ -10,11 +10,9 @@ the symlink farm under `repos/`, integration tests under
 ecosystem's daemons (criome, nexus, forge, arca-daemon) into
 deployable NixOS services.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the dev-environment
-shape and criome's
-`ARCHITECTURE.md`
-for the project being built (REQUIRED READING for every agent
-or human working in any sema-ecosystem repo).
+See `ARCHITECTURE.md` for the dev-environment shape and criome's
+`ARCHITECTURE.md` for the project being built (REQUIRED READING
+for every agent or human working in any sema-ecosystem repo).
 
 `nix develop` opens the dev shell. `nix flake check` runs the
 workspace's aggregated unit-test surface and the integration
